@@ -2,15 +2,39 @@ import os
 import sys
 import time
 import threading
-import json
-import urllib.request
-import urllib.error
+import requests
+import urllib3
 from datetime import datetime
 from flask import Flask
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from collections import deque
+
+# Disable SSL warnings (temporary fix for Render)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ============================================
+
+
+cd ~/trading-bot
+
+cat > alltradebot.py << 'EOF'
+import os
+import sys
+import time
+import threading
+import requests
+import urllib3
+from datetime import datetime
+from flask import Flask
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from collections import deque
+
+# Disable SSL warnings (temporary fix for Render)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
 # LOAD ENVIRONMENT VARIABLES
@@ -21,7 +45,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-5028779191")
 
 print(f"🔑 TELEGRAM_TOKEN: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
 print(f"📱 TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
-print(f"🚀 Starting bot initialization...")
 
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN not found!")
@@ -44,11 +67,19 @@ def health():
 @app.route('/test-telegram')
 def test_telegram():
     """Test endpoint to manually trigger a Telegram message"""
-    result = send_telegram("🧪 Test message from bot!")
+    print("🧪 Test endpoint called!")
+    result = send_telegram("🧪 Test message from bot! Bot is working! ✅")
     if result:
-        return "✅ Test message sent to Telegram!"
+        return "✅ Test message sent to Telegram! Check your group!"
     else:
-        return "❌ Failed to send test message", 500
+        return "❌ Failed to send test message. Check logs.", 500
+
+@app.route('/force-start')
+def force_start():
+    """Force the bot to start immediately"""
+    print("🚀 Force start called!")
+    run_bot_once()
+    return "✅ Bot started! Check Telegram for messages."
 
 @app.route('/status')
 def status():
@@ -60,43 +91,13 @@ def status():
     }
 
 # ============================================
-# TELEGRAM FUNCTIONS USING URLLIB (More Reliable)
+# TELEGRAM FUNCTIONS WITH SSL FIX FOR RENDER
 # ============================================
-
-def test_telegram_connection():
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
-        print(f"🔍 Testing Telegram connection...")
-        print(f"📡 URL: {url[:60]}...")
-        
-        # Use urllib instead of requests
-        req = urllib.request.Request(url, method='GET')
-        req.add_header('User-Agent', 'Mozilla/5.0')
-        
-        with urllib.request.urlopen(req, timeout=15) as response:
-            data = json.loads(response.read().decode())
-            print(f"📡 Response status: {response.status}")
-            
-            if data.get('ok'):
-                print(f"✅ Bot connected: @{data['result']['username']}")
-                return True
-            else:
-                print(f"❌ Bot error: {data}")
-                return False
-                
-    except urllib.error.URLError as e:
-        print(f"❌ URL Error: {e}")
-        return False
-    except Exception as e:
-        print(f"❌ Connection error: {e}")
-        return False
 
 def send_telegram(message, disable_notification=False):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        
-        # Build the POST data
-        data = {
+        payload = {
             'chat_id': TELEGRAM_CHAT_ID,
             'text': message,
             'parse_mode': 'HTML',
@@ -104,27 +105,30 @@ def send_telegram(message, disable_notification=False):
         }
         
         print(f"📤 Sending Telegram message...")
+        print(f"📝 Message length: {len(message)} characters")
         
-        # Encode data as form data
-        post_data = urllib.parse.urlencode(data).encode('utf-8')
+        # Use verify=False for Render's network
+        response = requests.post(url, data=payload, timeout=30, verify=False)
         
-        req = urllib.request.Request(url, data=post_data, method='POST')
-        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        req.add_header('User-Agent', 'Mozilla/5.0')
+        print(f"📡 Response status: {response.status_code}")
         
-        with urllib.request.urlopen(req, timeout=15) as response:
-            response_data = json.loads(response.read().decode())
-            print(f"📡 Response status: {response.status}")
-            
-            if response_data.get('ok'):
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('ok'):
                 print("✅ Telegram message sent")
                 return True
             else:
-                print(f"❌ Telegram failed: {response_data}")
+                print(f"❌ Telegram API error: {data}")
                 return False
-                
-    except urllib.error.URLError as e:
-        print(f"❌ URL Error: {e}")
+        else:
+            print(f"❌ HTTP Error: {response.status_code} - {response.text[:200]}")
+            return False
+            
+    except requests.exceptions.Timeout:
+        print("❌ Timeout: Telegram API not responding")
+        return False
+    except requests.exceptions.ConnectionError as e:
+        print(f"❌ Connection Error: {e}")
         return False
     except Exception as e:
         print(f"❌ Telegram error: {e}")
@@ -425,26 +429,26 @@ def check_all_symbols():
     return results, current_prices
 
 # ============================================
-# RUN THE BOT
+# RUN THE BOT ONCE
 # ============================================
 
-def run_bot():
-    print("🚀 Starting bot thread...")
-    print("=" * 60)
-    print("🚀 CASCADE SIGNAL SYSTEM")
-    print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
-    print("🎯 Multi-Timeframe Analysis Active")
-    print("=" * 60)
+def run_bot_once():
+    print("🚀 Running bot once...")
     
-    print("\n📱 Testing Telegram connection...")
-    if not test_telegram_connection():
-        print("❌ Failed to connect to Telegram")
-        print("💡 Check your TELEGRAM_TOKEN in environment variables")
-        print("💡 Make sure the bot token is valid")
+    # Test Telegram connection by sending a test message
+    test_msg = "🧪 Bot is starting up! Testing connection..."
+    print(f"📤 Sending test message...")
+    if send_telegram(test_msg):
+        print("✅ Test message sent! Check Telegram!")
+    else:
+        print("❌ Failed to send test message.")
+        print("🔍 Please check:")
+        print("   1. TELEGRAM_TOKEN is correct")
+        print("   2. Bot is added to the group")
+        print("   3. Render can reach Telegram API")
         return
     
-    print("\n✅ All good! Starting bot...")
-    
+    # If test works, send the startup message
     startup_msg = f"""
 ✅ <b>CASCADE SIGNAL SYSTEM STARTED</b> 🎯
 
@@ -463,11 +467,28 @@ Bot is now active! 🧠
     
     print("\n📊 Running initial scan...")
     check_all_symbols()
+    print("✅ Initial scan complete!")
+
+# ============================================
+# RUN THE BOT CONTINUOUSLY
+# ============================================
+
+def run_bot_continuous():
+    print("🚀 Starting continuous bot thread...")
+    print("=" * 60)
+    print("🚀 CASCADE SIGNAL SYSTEM")
+    print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
+    print("🎯 Multi-Timeframe Analysis Active")
+    print("=" * 60)
+    
+    # Run once to start
+    run_bot_once()
     
     print("\n🤖 Bot is running. Updates every 15 minutes.\n")
     
     while True:
-        time.sleep(900)
+        time.sleep(900)  # 15 minutes
+        print(f"\n📊 Scheduled scan at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         check_all_symbols()
 
 # ============================================
@@ -475,6 +496,8 @@ Bot is now active! 🧠
 # ============================================
 
 print("🚀 Starting bot thread from module level...")
-bot_thread = threading.Thread(target=run_bot, daemon=True)
+bot_thread = threading.Thread(target=run_bot_continuous, daemon=True)
 bot_thread.start()
 print("✅ Bot thread started")
+
+print("🌐 Flask server running on port " + os.environ.get("PORT", "5000"))
