@@ -18,12 +18,11 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-5028779191")
 
 if not TELEGRAM_TOKEN:
-    print("❌ TELEGRAM_TOKEN not found in environment variables!")
-    print("Please set TELEGRAM_TOKEN in Render Environment settings")
+    print("❌ TELEGRAM_TOKEN not found!")
     sys.exit(1)
 
 # ============================================
-# FLASK APP - MUST BE DEFINED FIRST
+# FLASK APP - ROUTES DEFINED HERE
 # ============================================
 
 app = Flask(__name__)
@@ -37,7 +36,7 @@ def health():
     return "OK", 200
 
 # ============================================
-# REST OF YOUR CODE
+# TELEGRAM FUNCTIONS
 # ============================================
 
 def test_telegram_connection():
@@ -401,18 +400,18 @@ Bot is now active! 🧠
     print("\n🤖 Bot is running. Updates every 15 minutes.\n")
     
     while True:
-        time.sleep(900)  # 15 minutes
+        time.sleep(900)
         check_all_symbols()
 
 # ============================================
-# MAIN - RUN FLASK + BOT
+# MAIN - START BOT AND FLASK
 # ============================================
 
 if __name__ == "__main__":
-    # Start bot in a background thread
+    # Start bot in background thread
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # Run Flask server (for health checks)
+    # Run Flask server
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
