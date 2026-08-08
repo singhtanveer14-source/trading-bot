@@ -48,27 +48,49 @@ def test_telegram():
     else:
         return "❌ Failed to send test message", 500
 
+@app.route('/status')
+def status():
+    """Check bot status"""
+    return {
+        'status': 'running',
+        'telegram_token': '✅ Set' if TELEGRAM_TOKEN else '❌ Missing',
+        'chat_id': TELEGRAM_CHAT_ID
+    }
+
 # ============================================
-# TELEGRAM FUNCTIONS
+# TELEGRAM FUNCTIONS WITH BETTER ERROR HANDLING
 # ============================================
 
 def test_telegram_connection():
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
         print(f"🔍 Testing Telegram connection...")
-        response = requests.get(url, timeout=10)
-        print(f"📡 Response status: {response.status_code}")
+        print(f"📡 URL: {url[:50]}...")
         
-        if response.status_code == 200:
-            data = response.json()
-            print(f"📊 Response: {data}")
-            if data.get('ok'):
-                print(f"✅ Bot connected: @{data['result']['username']}")
-                return True
-            else:
-                print(f"❌ Bot error: {data}")
-        else:
-            print(f"❌ HTTP Error: {response.status_code} - {response.text}")
+        # Try with longer timeout and retry
+        for attempt in range(3):
+            try:
+                response = requests.get(url, timeout=30)
+                print(f"📡 Response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"📊 Response: {data}")
+                    if data.get('ok'):
+                        print(f"✅ Bot connected: @{data['result']['username']}")
+                        return True
+                    else:
+                        print(f"❌ Bot error: {data}")
+                else:
+                    print(f"❌ HTTP Error: {response.status_code} - {response.text}")
+                break
+            except requests.exceptions.Timeout:
+                print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
+                time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ Attempt {attempt + 1} error: {e}")
+                time.sleep(2)
+        
         return False
     except Exception as e:
         print(f"❌ Connection error: {e}")
@@ -84,15 +106,27 @@ def send_telegram(message, disable_notification=False):
             'disable_notification': disable_notification
         }
         print(f"📤 Sending Telegram message...")
-        response = requests.post(url, data=payload, timeout=10)
-        print(f"📡 Response status: {response.status_code}")
         
-        if response.status_code == 200:
-            print("✅ Telegram message sent")
-            return True
-        else:
-            print(f"❌ Telegram failed: {response.status_code} - {response.text}")
-            return False
+        # Try with retry
+        for attempt in range(3):
+            try:
+                response = requests.post(url, data=payload, timeout=30)
+                print(f"📡 Response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    print("✅ Telegram message sent")
+                    return True
+                else:
+                    print(f"❌ Telegram failed: {response.status_code} - {response.text}")
+                break
+            except requests.exceptions.Timeout:
+                print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
+                time.sleep(2)
+            except Exception as e:
+                print(f"⚠️ Attempt {attempt + 1} error: {e}")
+                time.sleep(2)
+        
+        return False
     except Exception as e:
         print(f"❌ Telegram error: {e}")
         return False
@@ -113,7 +147,7 @@ SYMBOLS_CONFIG = {
 ACTIVE_SYMBOLS = [symbol for symbol, config in SYMBOLS_CONFIG.items() if config['active']]
 
 # ============================================
-# INDICATORS
+# INDICATORS (SAME AS BEFORE)
 # ============================================
 
 def wma(price, period):
@@ -445,10 +479,6 @@ print("🚀 Starting bot thread from module level...")
 bot_thread = threading.Thread(target=run_bot, daemon=True)
 bot_thread.start()
 print("✅ Bot thread started")
-
-# ============================================
-# The app object is created above and used by Gunicorn
-# ============================================
 
 # Note: The Flask app (app) is already defined above.
 # Gunicorn will use it directly.
