@@ -45,28 +45,69 @@ def health():
 @app.route('/test-telegram')
 def test_telegram():
     """Test endpoint to manually trigger a Telegram message"""
-    print("🧪 Test endpoint called!")
-    result = send_telegram("🧪 Test message from bot! Bot is working! ✅")
-    if result:
-        return "✅ Test message sent to Telegram! Check your group!"
-    else:
-        return "❌ Failed to send test message. Check logs.", 500
+    try:
+        print("🧪 Test endpoint called!")
+        result = send_telegram("🧪 Test message from bot! Bot is working! ✅")
+        if result:
+            return "✅ Test message sent to Telegram! Check your group!"
+        else:
+            return "❌ Failed to send test message. Check logs.", 500
+    except Exception as e:
+        print(f"❌ Test endpoint error: {e}")
+        return f"❌ Error: {e}", 500
 
 @app.route('/force-start')
 def force_start():
     """Force the bot to start immediately"""
-    print("🚀 Force start called!")
-    run_bot_once()
-    return "✅ Bot started! Check Telegram for messages."
+    try:
+        print("🚀 Force start called!")
+        
+        # Send a test message
+        test_result = send_telegram("🚀 Bot force-started! Checking connection...")
+        
+        if test_result:
+            # If test works, send the startup message
+            startup_msg = f"""
+✅ <b>CASCADE SIGNAL SYSTEM FORCE STARTED</b> 🎯
+
+🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+⚡ <b>Signal Cascade:</b>
+   Stage 1: <b>Fast RSI(6) + WMA(6)</b> (Early Signal)
+   Stage 2: <b>SuperTrend</b> (Confirmation)
+   Stage 3: <b>Volume + Trend</b> (Final Filter)
+
+📊 <b>Monitoring:</b> {', '.join(SYMBOLS_CONFIG[s]['short'] for s in ACTIVE_SYMBOLS)}
+🎯 <b>Signal Types:</b> EARLY → CONSIDER → BUY/SELL → STRONG
+
+Bot is now active! 🧠
+            """
+            send_telegram(startup_msg)
+            
+            # Run a quick scan
+            print("📊 Running quick scan...")
+            check_all_symbols()
+            
+            return "✅ Bot force-started successfully! Check Telegram for messages."
+        else:
+            return "❌ Failed to send test message. Check logs.", 500
+            
+    except Exception as e:
+        print(f"❌ Force start error: {e}")
+        return f"❌ Error: {e}", 500
 
 @app.route('/status')
 def status():
     """Check bot status"""
-    return {
-        'status': 'running',
-        'telegram_token': '✅ Set' if TELEGRAM_TOKEN else '❌ Missing',
-        'chat_id': TELEGRAM_CHAT_ID
-    }
+    try:
+        return {
+            'status': 'running',
+            'telegram_token': '✅ Set' if TELEGRAM_TOKEN else '❌ Missing',
+            'chat_id': TELEGRAM_CHAT_ID,
+            'active_symbols': len(ACTIVE_SYMBOLS),
+            'symbols': [SYMBOLS_CONFIG[s]['short'] for s in ACTIVE_SYMBOLS]
+        }
+    except Exception as e:
+        return {'status': 'error', 'error': str(e)}, 500
 
 # ============================================
 # TELEGRAM FUNCTIONS WITH SSL FIX FOR RENDER
@@ -407,26 +448,21 @@ def check_all_symbols():
     return results, current_prices
 
 # ============================================
-# RUN THE BOT ONCE
+# RUN THE BOT CONTINUOUSLY
 # ============================================
 
-def run_bot_once():
-    print("🚀 Running bot once...")
+def run_bot_continuous():
+    print("🚀 Starting continuous bot thread...")
+    print("=" * 60)
+    print("🚀 CASCADE SIGNAL SYSTEM")
+    print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
+    print("🎯 Multi-Timeframe Analysis Active")
+    print("=" * 60)
     
-    # Test Telegram connection by sending a test message
-    test_msg = "🧪 Bot is starting up! Testing connection..."
-    print(f"📤 Sending test message...")
-    if send_telegram(test_msg):
-        print("✅ Test message sent! Check Telegram!")
-    else:
-        print("❌ Failed to send test message.")
-        print("🔍 Please check:")
-        print("   1. TELEGRAM_TOKEN is correct")
-        print("   2. Bot is added to the group")
-        print("   3. Render can reach Telegram API")
-        return
+    # Wait a moment then send startup
+    time.sleep(2)
     
-    # If test works, send the startup message
+    print("\n📤 Sending startup message...")
     startup_msg = f"""
 ✅ <b>CASCADE SIGNAL SYSTEM STARTED</b> 🎯
 
@@ -446,21 +482,6 @@ Bot is now active! 🧠
     print("\n📊 Running initial scan...")
     check_all_symbols()
     print("✅ Initial scan complete!")
-
-# ============================================
-# RUN THE BOT CONTINUOUSLY
-# ============================================
-
-def run_bot_continuous():
-    print("🚀 Starting continuous bot thread...")
-    print("=" * 60)
-    print("🚀 CASCADE SIGNAL SYSTEM")
-    print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
-    print("🎯 Multi-Timeframe Analysis Active")
-    print("=" * 60)
-    
-    # Run once to start
-    run_bot_once()
     
     print("\n🤖 Bot is running. Updates every 15 minutes.\n")
     
