@@ -14,26 +14,6 @@ from collections import deque
 # LOAD ENVIRONMENT VARIABLES
 # ============================================
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except:
-    pass
-
-if not os.getenv("TELEGRAM_TOKEN"):
-    try:
-        with open('.env', 'r') as f:
-            for line in f:
-                if '=' in line:
-                    key, value = line.strip().split('=', 1)
-                    os.environ[key] = value.strip().strip('"').strip("'")
-    except:
-        pass
-
-# ============================================
-# CREDENTIALS
-# ============================================
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-5028779191")
 
@@ -43,25 +23,21 @@ if not TELEGRAM_TOKEN:
     sys.exit(1)
 
 # ============================================
-# FLASK APP
+# FLASK APP - MUST BE DEFINED FIRST
 # ============================================
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Cascade Signal System Active"
+    return "🚀 Cascade Signal System is Running!"
 
 @app.route('/health')
 def health():
     return "OK", 200
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
 # ============================================
-# TELEGRAM FUNCTIONS
+# REST OF YOUR CODE
 # ============================================
 
 def test_telegram_connection():
@@ -73,22 +49,6 @@ def test_telegram_connection():
             if data.get('ok'):
                 print(f"✅ Bot connected: @{data['result']['username']}")
                 return True
-        return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
-
-def test_group_chat_id():
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': '🔄 Bot is starting up...'
-        }
-        response = requests.post(url, data=payload, timeout=10)
-        if response.status_code == 200:
-            print("✅ Test message sent to group!")
-            return True
         return False
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -117,48 +77,12 @@ def send_telegram(message, disable_notification=False):
 # ============================================
 
 SYMBOLS_CONFIG = {
-    'BTC-USD': {
-        'name': 'Bitcoin', 'emoji': '🟢', 'short': 'BTC',
-        'st_period': 14, 'st_multiplier': 3.0,
-        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
-        'price_change_threshold': 0.5,
-        'active': True
-    },
-    'ETH-USD': {
-        'name': 'Ethereum', 'emoji': '🟣', 'short': 'ETH',
-        'st_period': 12, 'st_multiplier': 2.8,
-        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
-        'price_change_threshold': 0.8,
-        'active': True
-    },
-    'SOL-USD': {
-        'name': 'Solana', 'emoji': '🟠', 'short': 'SOL',
-        'st_period': 10, 'st_multiplier': 2.5,
-        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
-        'price_change_threshold': 1.0,
-        'active': True
-    },
-    'PAXG-USD': {
-        'name': 'PAX Gold', 'emoji': '🥇', 'short': 'PAXG',
-        'st_period': 20, 'st_multiplier': 3.5,
-        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
-        'price_change_threshold': 0.3,
-        'active': True
-    },
-    'SI=F': {
-        'name': 'Silver', 'emoji': '🥈', 'short': 'SLV',
-        'st_period': 16, 'st_multiplier': 3.2,
-        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
-        'price_change_threshold': 0.5,
-        'active': True
-    },
-    '^NSEI': {
-        'name': 'Nifty 50', 'emoji': '🇮🇳', 'short': 'NIFTY',
-        'st_period': 14, 'st_multiplier': 3.0,
-        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
-        'price_change_threshold': 0.4,
-        'active': True
-    }
+    'BTC-USD': {'name': 'Bitcoin', 'emoji': '🟢', 'short': 'BTC', 'st_period': 14, 'st_multiplier': 3.0, 'fast_rsi_period': 6, 'fast_rsi_smooth': 6, 'price_change_threshold': 0.5, 'active': True},
+    'ETH-USD': {'name': 'Ethereum', 'emoji': '🟣', 'short': 'ETH', 'st_period': 12, 'st_multiplier': 2.8, 'fast_rsi_period': 6, 'fast_rsi_smooth': 6, 'price_change_threshold': 0.8, 'active': True},
+    'SOL-USD': {'name': 'Solana', 'emoji': '🟠', 'short': 'SOL', 'st_period': 10, 'st_multiplier': 2.5, 'fast_rsi_period': 6, 'fast_rsi_smooth': 6, 'price_change_threshold': 1.0, 'active': True},
+    'PAXG-USD': {'name': 'PAX Gold', 'emoji': '🥇', 'short': 'PAXG', 'st_period': 20, 'st_multiplier': 3.5, 'fast_rsi_period': 6, 'fast_rsi_smooth': 6, 'price_change_threshold': 0.3, 'active': True},
+    'SI=F': {'name': 'Silver', 'emoji': '🥈', 'short': 'SLV', 'st_period': 16, 'st_multiplier': 3.2, 'fast_rsi_period': 6, 'fast_rsi_smooth': 6, 'price_change_threshold': 0.5, 'active': True},
+    '^NSEI': {'name': 'Nifty 50', 'emoji': '🇮🇳', 'short': 'NIFTY', 'st_period': 14, 'st_multiplier': 3.0, 'fast_rsi_period': 6, 'fast_rsi_smooth': 6, 'price_change_threshold': 0.4, 'active': True}
 }
 
 ACTIVE_SYMBOLS = [symbol for symbol, config in SYMBOLS_CONFIG.items() if config['active']]
@@ -369,7 +293,6 @@ class SignalEngine:
 # ============================================
 
 def check_all_symbols():
-    """Check all symbols and send results to Telegram"""
     engine = SignalEngine()
     results = {}
     current_prices = {}
@@ -383,7 +306,6 @@ def check_all_symbols():
             current_prices[symbol] = price
         time.sleep(0.3)
     
-    # Build message
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     message = f"<b>🎯 CASCADE SIGNAL SYSTEM</b>\n"
     message += f"⏱ {now}\n"
@@ -418,7 +340,6 @@ def check_all_symbols():
             message += f"   Price: ${price:.2f}\n"
             message += f"   Signal: {signal_display}\n"
     
-    # Market sentiment
     sentiment = buy_count - sell_count
     if sentiment > 1:
         sentiment_text = "🟢 BULLISH"
@@ -433,7 +354,6 @@ def check_all_symbols():
     message += f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
     message += f"<b>📊 SENTIMENT: {emoji} {sentiment_text}</b>\n"
     message += f"   Buys: {buy_count:.1f} | Sells: {sell_count:.1f}\n"
-    
     message += f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
     message += f"⏱ Next update in 15 minutes\n"
     message += f"🧠 Cascade System: ACTIVE\n"
@@ -442,35 +362,23 @@ def check_all_symbols():
     return results, current_prices
 
 # ============================================
-# MAIN
+# RUN THE BOT
 # ============================================
 
-if __name__ == "__main__":
+def run_bot():
     print("=" * 60)
     print("🚀 CASCADE SIGNAL SYSTEM")
     print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
     print("🎯 Multi-Timeframe Analysis Active")
     print("=" * 60)
     
-    # Start web server
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    print("🌐 Web server started for health checks")
-    
-    # Test connections
     print("\n📱 Testing Telegram connection...")
     if not test_telegram_connection():
         print("❌ Failed to connect to Telegram")
         sys.exit(1)
     
-    print("\n💬 Testing group chat ID...")
-    if not test_group_chat_id():
-        print("❌ Failed to send test message")
-        sys.exit(1)
-    
     print("\n✅ All good! Starting bot...")
     
-    # Send startup message
     startup_msg = f"""
 ✅ <b>CASCADE SIGNAL SYSTEM STARTED</b> 🎯
 
@@ -490,13 +398,21 @@ Bot is now active! 🧠
     print("\n📊 Running initial scan...")
     check_all_symbols()
     
-    print("\n🤖 Bot is running. Updates will be sent to Telegram every 15 minutes.")
-    print("Press Ctrl+C to stop.\n")
+    print("\n🤖 Bot is running. Updates every 15 minutes.\n")
     
-    try:
-        while True:
-            time.sleep(900)  # 15 minutes
-            check_all_symbols()
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-        send_telegram("🛑 Bot stopped by user")
+    while True:
+        time.sleep(900)  # 15 minutes
+        check_all_symbols()
+
+# ============================================
+# MAIN - RUN FLASK + BOT
+# ============================================
+
+if __name__ == "__main__":
+    # Start bot in a background thread
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Run Flask server (for health checks)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
