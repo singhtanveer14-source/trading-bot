@@ -2,7 +2,9 @@ import os
 import sys
 import time
 import threading
-import requests
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime
 from flask import Flask
 import yfinance as yf
@@ -58,39 +60,32 @@ def status():
     }
 
 # ============================================
-# TELEGRAM FUNCTIONS WITH BETTER ERROR HANDLING
+# TELEGRAM FUNCTIONS USING URLLIB (More Reliable)
 # ============================================
 
 def test_telegram_connection():
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
         print(f"🔍 Testing Telegram connection...")
-        print(f"📡 URL: {url[:50]}...")
+        print(f"📡 URL: {url[:60]}...")
         
-        # Try with longer timeout and retry
-        for attempt in range(3):
-            try:
-                response = requests.get(url, timeout=30)
-                print(f"📡 Response status: {response.status_code}")
+        # Use urllib instead of requests
+        req = urllib.request.Request(url, method='GET')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode())
+            print(f"📡 Response status: {response.status}")
+            
+            if data.get('ok'):
+                print(f"✅ Bot connected: @{data['result']['username']}")
+                return True
+            else:
+                print(f"❌ Bot error: {data}")
+                return False
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    print(f"📊 Response: {data}")
-                    if data.get('ok'):
-                        print(f"✅ Bot connected: @{data['result']['username']}")
-                        return True
-                    else:
-                        print(f"❌ Bot error: {data}")
-                else:
-                    print(f"❌ HTTP Error: {response.status_code} - {response.text}")
-                break
-            except requests.exceptions.Timeout:
-                print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
-                time.sleep(2)
-            except Exception as e:
-                print(f"⚠️ Attempt {attempt + 1} error: {e}")
-                time.sleep(2)
-        
+    except urllib.error.URLError as e:
+        print(f"❌ URL Error: {e}")
         return False
     except Exception as e:
         print(f"❌ Connection error: {e}")
@@ -99,33 +94,37 @@ def test_telegram_connection():
 def send_telegram(message, disable_notification=False):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
+        
+        # Build the POST data
+        data = {
             'chat_id': TELEGRAM_CHAT_ID,
             'text': message,
             'parse_mode': 'HTML',
             'disable_notification': disable_notification
         }
+        
         print(f"📤 Sending Telegram message...")
         
-        # Try with retry
-        for attempt in range(3):
-            try:
-                response = requests.post(url, data=payload, timeout=30)
-                print(f"📡 Response status: {response.status_code}")
-                
-                if response.status_code == 200:
-                    print("✅ Telegram message sent")
-                    return True
-                else:
-                    print(f"❌ Telegram failed: {response.status_code} - {response.text}")
-                break
-            except requests.exceptions.Timeout:
-                print(f"⚠️ Attempt {attempt + 1} timed out, retrying...")
-                time.sleep(2)
-            except Exception as e:
-                print(f"⚠️ Attempt {attempt + 1} error: {e}")
-                time.sleep(2)
+        # Encode data as form data
+        post_data = urllib.parse.urlencode(data).encode('utf-8')
         
+        req = urllib.request.Request(url, data=post_data, method='POST')
+        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        
+        with urllib.request.urlopen(req, timeout=15) as response:
+            response_data = json.loads(response.read().decode())
+            print(f"📡 Response status: {response.status}")
+            
+            if response_data.get('ok'):
+                print("✅ Telegram message sent")
+                return True
+            else:
+                print(f"❌ Telegram failed: {response_data}")
+                return False
+                
+    except urllib.error.URLError as e:
+        print(f"❌ URL Error: {e}")
         return False
     except Exception as e:
         print(f"❌ Telegram error: {e}")
@@ -147,7 +146,7 @@ SYMBOLS_CONFIG = {
 ACTIVE_SYMBOLS = [symbol for symbol, config in SYMBOLS_CONFIG.items() if config['active']]
 
 # ============================================
-# INDICATORS (SAME AS BEFORE)
+# INDICATORS
 # ============================================
 
 def wma(price, period):
@@ -426,7 +425,7 @@ def check_all_symbols():
     return results, current_prices
 
 # ============================================
-# RUN THE BOT - START AT MODULE LEVEL (for Gunicorn)
+# RUN THE BOT
 # ============================================
 
 def run_bot():
@@ -472,14 +471,10 @@ Bot is now active! 🧠
         check_all_symbols()
 
 # ============================================
-# START THE BOT THREAD (Runs when Gunicorn imports)
+# START THE BOT THREAD
 # ============================================
 
 print("🚀 Starting bot thread from module level...")
 bot_thread = threading.Thread(target=run_bot, daemon=True)
 bot_thread.start()
 print("✅ Bot thread started")
-
-# Note: The Flask app (app) is already defined above.
-# Gunicorn will use it directly.
-# The bot thread runs in the background.
