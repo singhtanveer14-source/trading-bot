@@ -39,6 +39,15 @@ def home():
 def health():
     return "OK", 200
 
+@app.route('/test-telegram')
+def test_telegram():
+    """Test endpoint to manually trigger a Telegram message"""
+    result = send_telegram("🧪 Test message from bot!")
+    if result:
+        return "✅ Test message sent to Telegram!"
+    else:
+        return "❌ Failed to send test message", 500
+
 # ============================================
 # TELEGRAM FUNCTIONS
 # ============================================
@@ -383,7 +392,7 @@ def check_all_symbols():
     return results, current_prices
 
 # ============================================
-# RUN THE BOT
+# RUN THE BOT - START AT MODULE LEVEL (for Gunicorn)
 # ============================================
 
 def run_bot():
@@ -429,18 +438,18 @@ Bot is now active! 🧠
         check_all_symbols()
 
 # ============================================
-# MAIN
+# START THE BOT THREAD (Runs when Gunicorn imports)
 # ============================================
 
-if __name__ == "__main__":
-    print("🚀 Starting main...")
-    
-    # Start bot in background thread
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    print("✅ Bot thread started")
-    
-    # Run Flask server
-    port = int(os.environ.get("PORT", 5000))
-    print(f"🌐 Starting Flask server on port {port}...")
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+print("🚀 Starting bot thread from module level...")
+bot_thread = threading.Thread(target=run_bot, daemon=True)
+bot_thread.start()
+print("✅ Bot thread started")
+
+# ============================================
+# The app object is created above and used by Gunicorn
+# ============================================
+
+# Note: The Flask app (app) is already defined above.
+# Gunicorn will use it directly.
+# The bot thread runs in the background.
