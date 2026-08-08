@@ -19,6 +19,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-5028779191")
 
 print(f"🔑 TELEGRAM_TOKEN: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
 print(f"📱 TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
+print(f"🚀 Starting bot initialization...")
 
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN not found!")
@@ -39,7 +40,7 @@ def health():
     return "OK", 200
 
 # ============================================
-# TELEGRAM FUNCTIONS WITH DEBUG
+# TELEGRAM FUNCTIONS
 # ============================================
 
 def test_telegram_connection():
@@ -51,7 +52,7 @@ def test_telegram_connection():
         
         if response.status_code == 200:
             data = response.json()
-            print(f"📊 Response data: {data}")
+            print(f"📊 Response: {data}")
             if data.get('ok'):
                 print(f"✅ Bot connected: @{data['result']['username']}")
                 return True
@@ -386,6 +387,7 @@ def check_all_symbols():
 # ============================================
 
 def run_bot():
+    print("🚀 Starting bot thread...")
     print("=" * 60)
     print("🚀 CASCADE SIGNAL SYSTEM")
     print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
@@ -431,10 +433,14 @@ Bot is now active! 🧠
 # ============================================
 
 if __name__ == "__main__":
+    print("🚀 Starting main...")
+    
     # Start bot in background thread
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
+    print("✅ Bot thread started")
     
     # Run Flask server
     port = int(os.environ.get("PORT", 5000))
+    print(f"🌐 Starting Flask server on port {port}...")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
