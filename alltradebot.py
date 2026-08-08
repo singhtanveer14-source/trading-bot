@@ -15,27 +15,6 @@ from collections import deque
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ============================================
-
-
-
-cat > alltradebot.py << 'EOF'
-import os
-import sys
-import time
-import threading
-import requests
-import urllib3
-from datetime import datetime
-from flask import Flask
-import yfinance as yf
-import pandas as pd
-import numpy as np
-from collections import deque
-
-# Disable SSL warnings (temporary fix for Render)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# ============================================
 # LOAD ENVIRONMENT VARIABLES
 # ============================================
 
