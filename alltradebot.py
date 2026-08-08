@@ -1,161 +1,100 @@
-from flask import Flask
-import threading
-from delta_rest_client import DeltaRestClient
-import pandas as pd
-import numpy as np
-import time
-import requests
-from datetime import datetime
-import json
 import os
 import sys
+import time
+import threading
+import requests
+from datetime import datetime
+from flask import Flask
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from collections import deque
 
 # ============================================
-# CREDENTIALS - UPDATE THESE!
+# LOAD ENVIRONMENT VARIABLES
 # ============================================
-API_KEY = "cWUHyTA848xDdgKCjgtAuNBgebAvil"
-API_SECRET = "cWUHyTA848xDdgKCjgtAuNBgebAvil"
 
-# Telegram Bot Token (from BotFather)
-TELEGRAM_TOKEN = "8815327869:AAH2kYrE35GvasgmzSpFaRIXUc69bobC1ZI"
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    pass
 
-# Group Chat ID - Get this using the method above
-# IMPORTANT: Group IDs usually start with -100 (negative number)
-TELEGRAM_CHAT_ID = "-5028779191"  # REPLACE WITH YOUR ACTUAL GROUP CHAT ID!
+if not os.getenv("TELEGRAM_TOKEN"):
+    try:
+        with open('.env', 'r') as f:
+            for line in f:
+                if '=' in line:
+                    key, value = line.strip().split('=', 1)
+                    os.environ[key] = value.strip().strip('"').strip("'")
+    except:
+        pass
 
 # ============================================
-# FLASK APP FOR RENDER HEALTH CHECKS
+# CREDENTIALS
 # ============================================
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-5028779191")
+
+if not TELEGRAM_TOKEN:
+    print("❌ TELEGRAM_TOKEN not found in environment variables!")
+    print("Please set TELEGRAM_TOKEN in Render Environment settings")
+    sys.exit(1)
+
+# ============================================
+# FLASK APP
+# ============================================
+
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "BTC SuperTrend Bot is running 24/7!"
+    return "Cascade Signal System Active"
 
 @app.route('/health')
 def health():
     return "OK", 200
 
 def run_web_server():
-    """Run Flask web server in background for Render"""
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
-# TEST TELEGRAM CONNECTION FIRST!
+# TELEGRAM FUNCTIONS
 # ============================================
+
 def test_telegram_connection():
-    """Test if Telegram connection works"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            bot_info = response.json()
-            print(f"✅ Bot connected: @{bot_info['result']['username']}")
-            return True
-        else:
-            print(f"❌ Bot connection failed: {response.text}")
-            return False
+            data = response.json()
+            if data.get('ok'):
+                print(f"✅ Bot connected: @{data['result']['username']}")
+                return True
+        return False
     except Exception as e:
         print(f"❌ Error: {e}")
         return False
 
 def test_group_chat_id():
-    """Test if the group chat ID is correct"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
             'chat_id': TELEGRAM_CHAT_ID,
-            'text': '🔄 Test Message - Bot is working!'
+            'text': '🔄 Bot is starting up...'
         }
-        response = requests.post(url, data=payload)
+        response = requests.post(url, data=payload, timeout=10)
         if response.status_code == 200:
-            print(f"✅ Test message sent to group!")
+            print("✅ Test message sent to group!")
             return True
-        else:
-            print(f"❌ Failed to send test message: {response.text}")
-            return False
+        return False
     except Exception as e:
         print(f"❌ Error: {e}")
         return False
 
-# ============================================
-# INITIALIZE CLIENT
-# ============================================
-client = DeltaRestClient(
-    base_url='https://api.india.delta.exchange',
-    api_key=API_KEY,
-    api_secret=API_SECRET
-)
-
-# ============================================
-# SYMBOL CONFIGURATION
-# ============================================
-SYMBOLS_CONFIG = {
-    'BTCUSD': {
-        'name': 'Bitcoin',
-        'emoji': '🟢',
-        'short': 'BTC',
-        'stop_loss_pct': 0.03,
-        'take_profit_pct': 0.09,
-        'st_period': 14,
-        'st_multiplier': 3.0,
-        'price_change_threshold': 0.5,
-        'active': True
-    },
-    'ETHUSD': {
-        'name': 'Ethereum',
-        'emoji': '🟣',
-        'short': 'ETH',
-        'stop_loss_pct': 0.035,
-        'take_profit_pct': 0.10,
-        'st_period': 12,
-        'st_multiplier': 2.8,
-        'price_change_threshold': 0.8,
-        'active': True
-    },
-    'PAXGUSD': {
-        'name': 'PAX Gold',
-        'emoji': '🥇',
-        'short': 'PAXG',
-        'stop_loss_pct': 0.015,
-        'take_profit_pct': 0.05,
-        'st_period': 20,
-        'st_multiplier': 3.5,
-        'price_change_threshold': 0.3,
-        'active': True
-    },
-    'SOLUSD': {
-        'name': 'Solana',
-        'emoji': '🟠',
-        'short': 'SOL',
-        'stop_loss_pct': 0.05,
-        'take_profit_pct': 0.15,
-        'st_period': 10,
-        'st_multiplier': 2.5,
-        'price_change_threshold': 1.0,
-        'active': True
-    },
-    'SLVONUSD': {
-        'name': 'Silver',
-        'emoji': '🥈',
-        'short': 'SLV',
-        'stop_loss_pct': 0.025,
-        'take_profit_pct': 0.075,
-        'st_period': 16,
-        'st_multiplier': 3.2,
-        'price_change_threshold': 0.5,
-        'active': True
-    }
-}
-
-ACTIVE_SYMBOLS = [symbol for symbol, config in SYMBOLS_CONFIG.items() if config['active']]
-
-# ============================================
-# TELEGRAM FUNCTIONS
-# ============================================
 def send_telegram(message, disable_notification=False):
-    """Send message to Telegram group"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
@@ -164,94 +103,93 @@ def send_telegram(message, disable_notification=False):
             'parse_mode': 'HTML',
             'disable_notification': disable_notification
         }
-        response = requests.post(url, data=payload)
+        response = requests.post(url, data=payload, timeout=10)
         if response.status_code == 200:
-            print("✅ Telegram message sent to group")
+            print("✅ Telegram message sent")
             return True
-        else:
-            print(f"❌ Telegram failed: {response.text}")
-            return False
+        return False
     except Exception as e:
         print(f"❌ Telegram error: {e}")
         return False
 
-def get_group_chat_id_manual():
-    """Helper function to find your group chat ID"""
-    print("\n🔍 Fetching recent messages to find group chat ID...")
-    print("Make sure you've sent a message in the group recently!\n")
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        
-        if data.get('ok') and data.get('result'):
-            print("📋 Found these recent chats:")
-            print("=" * 50)
-            for update in data['result']:
-                if 'message' in update:
-                    chat = update['message']['chat']
-                    chat_type = chat.get('type', 'unknown')
-                    chat_title = chat.get('title', 'Private Chat')
-                    chat_id = chat['id']
-                    
-                    print(f"📱 Type: {chat_type}")
-                    print(f"📝 Title/Name: {chat_title}")
-                    print(f"🆔 Chat ID: {chat_id}")
-                    print("-" * 30)
-            print("\n📌 Copy the Chat ID for your group (usually negative number)")
-            print(f"   Example: -1001234567890")
-            print(f"   Then update TELEGRAM_CHAT_ID in the code")
-        else:
-            print("\n❌ No recent messages found.")
-            print("Please follow these steps:")
-            print("1. Add your bot to the group")
-            print("2. Send a message in the group (e.g., 'Hello bot')")
-            print("3. Run this script again")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+# ============================================
+# SYMBOL CONFIGURATION
+# ============================================
+
+SYMBOLS_CONFIG = {
+    'BTC-USD': {
+        'name': 'Bitcoin', 'emoji': '🟢', 'short': 'BTC',
+        'st_period': 14, 'st_multiplier': 3.0,
+        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
+        'price_change_threshold': 0.5,
+        'active': True
+    },
+    'ETH-USD': {
+        'name': 'Ethereum', 'emoji': '🟣', 'short': 'ETH',
+        'st_period': 12, 'st_multiplier': 2.8,
+        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
+        'price_change_threshold': 0.8,
+        'active': True
+    },
+    'SOL-USD': {
+        'name': 'Solana', 'emoji': '🟠', 'short': 'SOL',
+        'st_period': 10, 'st_multiplier': 2.5,
+        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
+        'price_change_threshold': 1.0,
+        'active': True
+    },
+    'PAXG-USD': {
+        'name': 'PAX Gold', 'emoji': '🥇', 'short': 'PAXG',
+        'st_period': 20, 'st_multiplier': 3.5,
+        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
+        'price_change_threshold': 0.3,
+        'active': True
+    },
+    'SI=F': {
+        'name': 'Silver', 'emoji': '🥈', 'short': 'SLV',
+        'st_period': 16, 'st_multiplier': 3.2,
+        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
+        'price_change_threshold': 0.5,
+        'active': True
+    },
+    '^NSEI': {
+        'name': 'Nifty 50', 'emoji': '🇮🇳', 'short': 'NIFTY',
+        'st_period': 14, 'st_multiplier': 3.0,
+        'fast_rsi_period': 6, 'fast_rsi_smooth': 6,
+        'price_change_threshold': 0.4,
+        'active': True
+    }
+}
+
+ACTIVE_SYMBOLS = [symbol for symbol, config in SYMBOLS_CONFIG.items() if config['active']]
 
 # ============================================
-# DATA FETCHING & INDICATORS
+# INDICATORS
 # ============================================
-def get_candles(symbol, resolution='1h', days=90):
-    """Fetch candles for any symbol from Delta Exchange"""
-    end = int(time.time())
-    start = end - (days * 24 * 60 * 60)
-    
-    try:
-        candles = client.get_candles(
-            symbol=symbol,
-            resolution=resolution,
-            start=start,
-            end=end
-        )
-        
-        if not candles or len(candles) == 0:
-            print(f"⚠️ No data returned for {symbol}")
-            return None
-        
-        df = pd.DataFrame(candles)
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-        df.set_index('time', inplace=True)
-        df.columns = [c.capitalize() for c in df.columns]
-        df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-        df = df.sort_index().astype(float)
-        
-        return df
-    except Exception as e:
-        print(f"❌ Error fetching data for {symbol}: {e}")
-        return None
 
 def wma(price, period):
-    """Weighted Moving Average"""
     weights = np.arange(1, period + 1)
     def _wma(arr):
         return np.sum(arr * weights) / weights.sum()
     return price.rolling(period).apply(_wma, raw=True)
 
+def calculate_rsi(data, period=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_fast_rsi_wma(data, rsi_period=6, smooth_period=6):
+    rsi = calculate_rsi(data, period=rsi_period)
+    weights = np.arange(1, smooth_period + 1)
+    def _wma(arr):
+        return np.sum(arr * weights) / weights.sum()
+    smoothed = rsi.rolling(smooth_period).apply(_wma, raw=True)
+    return rsi, smoothed
+
 def atr(high, low, close, period=14):
-    """Average True Range"""
     tr1 = high - low
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
@@ -259,104 +197,187 @@ def atr(high, low, close, period=14):
     return tr.rolling(period).mean()
 
 def supertrend(high, low, close, period=14, multiplier=3):
-    """Supertrend Indicator"""
     atr_vals = atr(high, low, close, period)
     hl2 = (high + low) / 2
     upper_band = hl2 + multiplier * atr_vals
     lower_band = hl2 - multiplier * atr_vals
-
+    
     trend = pd.Series(index=close.index, dtype=float)
     trend.iloc[0] = 1 if close.iloc[0] > upper_band.iloc[0] else -1
-
+    
     for i in range(1, len(close)):
         if trend.iloc[i-1] == 1:
-            if close.iloc[i] < lower_band.iloc[i-1]:
-                trend.iloc[i] = -1
-            else:
-                trend.iloc[i] = 1
+            trend.iloc[i] = -1 if close.iloc[i] < lower_band.iloc[i-1] else 1
         else:
-            if close.iloc[i] > upper_band.iloc[i-1]:
-                trend.iloc[i] = 1
-            else:
-                trend.iloc[i] = -1
-
+            trend.iloc[i] = 1 if close.iloc[i] > upper_band.iloc[i-1] else -1
+    
     return trend
 
-# ============================================
-# CHECK SIGNALS
-# ============================================
-def check_signal(symbol='BTCUSD', prev_price=None):
-    """Check for BUY/SELL signals"""
-    config = SYMBOLS_CONFIG.get(symbol)
-    if not config or not config['active']:
-        return "INACTIVE", None, None
+def calculate_volume_profile(volume, period=20):
+    avg_volume = volume.rolling(window=period).mean()
+    volume_ratio = volume / avg_volume
+    return avg_volume, volume_ratio
 
-    try:
-        df = get_candles(symbol=symbol, resolution='1h', days=90)
+# ============================================
+# SIGNAL ENGINE
+# ============================================
+
+class SignalEngine:
+    def __init__(self):
+        self.signal_history = {symbol: deque(maxlen=20) for symbol in ACTIVE_SYMBOLS}
+        self.price_history = {symbol: deque(maxlen=30) for symbol in ACTIVE_SYMBOLS}
+        self.trade_count = {symbol: 0 for symbol in ACTIVE_SYMBOLS}
+        self.last_price = {symbol: None for symbol in ACTIVE_SYMBOLS}
+    
+    def check_signal(self, symbol):
+        config = SYMBOLS_CONFIG.get(symbol)
+        if not config or not config['active']:
+            return "INACTIVE", None, None
         
-        if df is None or len(df) < 51:
+        try:
+            df = yf.download(symbol, period='3mo', interval='1h',
+                           progress=False, auto_adjust=True)
+            
+            if df is None or len(df) < 51:
+                return "ERROR", None, None
+            
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna().astype(float)
+            
+            st_period = config.get('st_period', 14)
+            st_multiplier = config.get('st_multiplier', 3.0)
+            
+            df['WMA21'] = wma(df['Close'], 21)
+            df['WMA51'] = wma(df['Close'], 51)
+            df['WMA21_PREV'] = df['WMA21'].shift(1)
+            
+            df['ST'] = supertrend(df['High'], df['Low'], df['Close'],
+                                 period=st_period, multiplier=st_multiplier)
+            df['ST_PREV'] = df['ST'].shift(1)
+            
+            rsi_period = config.get('fast_rsi_period', 6)
+            smooth_period = config.get('fast_rsi_smooth', 6)
+            df['RSI_FAST'], df['RSI_SMOOTH'] = calculate_fast_rsi_wma(
+                df['Close'], rsi_period, smooth_period
+            )
+            
+            df['VOL_AVG'], df['VOL_RATIO'] = calculate_volume_profile(df['Volume'])
+            
+            df.dropna(inplace=True)
+            
+            if len(df) == 0:
+                return "ERROR", None, None
+            
+            current = df.iloc[-1]
+            price = float(current['Close'])
+            
+            # Stage 1: Fast RSI(6) + WMA(6)
+            fast_rsi = current['RSI_FAST']
+            smooth_rsi = current['RSI_SMOOTH']
+            
+            if len(df) > 1:
+                rsi_smooth_prev = df['RSI_SMOOTH'].iloc[-2]
+                fast_rsi_prev = df['RSI_FAST'].iloc[-2]
+                cross_above = smooth_rsi < fast_rsi and rsi_smooth_prev > fast_rsi_prev
+                cross_below = smooth_rsi > fast_rsi and rsi_smooth_prev < fast_rsi_prev
+            else:
+                cross_above = False
+                cross_below = False
+            
+            early_signal = "HOLD"
+            stage1_bullish = smooth_rsi < 30 and cross_above and price > current['WMA21']
+            stage1_bearish = smooth_rsi > 70 and cross_below and price < current['WMA21']
+            
+            if stage1_bullish:
+                early_signal = "EARLY_BUY"
+            elif stage1_bearish:
+                early_signal = "EARLY_SELL"
+            
+            # Stage 2: SuperTrend
+            st_now = current['ST']
+            stage2_bullish = st_now == 1
+            stage2_bearish = st_now == -1
+            
+            # Stage 3: Volume + Trend
+            volume_surge = current['VOL_RATIO'] > 1.2
+            trend_up = current['WMA21'] > current['WMA51'] and current['WMA21'] > current['WMA21_PREV']
+            trend_down = current['WMA21'] < current['WMA51'] and current['WMA21'] < current['WMA21_PREV']
+            
+            # Confidence
+            confidence = 50
+            if stage1_bullish:
+                confidence += 20
+            elif stage1_bearish:
+                confidence -= 20
+            
+            if stage2_bullish:
+                confidence += 20
+            elif stage2_bearish:
+                confidence -= 20
+            
+            if volume_surge:
+                confidence += 10
+            if trend_up:
+                confidence += 5
+            elif trend_down:
+                confidence -= 5
+            
+            confidence = max(0, min(100, confidence))
+            
+            # Primary signal
+            primary_signal = "HOLD"
+            
+            if stage1_bullish and stage2_bullish and volume_surge and confidence >= 70:
+                primary_signal = "STRONG_BUY"
+            elif stage1_bullish and stage2_bullish and confidence >= 60:
+                primary_signal = "BUY"
+            elif stage1_bullish and confidence >= 50:
+                primary_signal = "CONSIDER_BUY"
+            elif stage1_bearish and stage2_bearish and volume_surge and confidence >= 70:
+                primary_signal = "STRONG_SELL"
+            elif stage1_bearish and stage2_bearish and confidence >= 60:
+                primary_signal = "SELL"
+            elif stage1_bearish and confidence >= 50:
+                primary_signal = "CONSIDER_SELL"
+            
+            # Price alert
+            price_alert = None
+            prev_price = self.last_price.get(symbol)
+            if prev_price is not None:
+                change_pct = ((price - prev_price) / prev_price) * 100
+                threshold = config.get('price_change_threshold', 0.5)
+                if abs(change_pct) >= threshold:
+                    price_alert = change_pct
+            
+            self.signal_history[symbol].append(primary_signal)
+            self.price_history[symbol].append(price)
+            self.last_price[symbol] = price
+            
+            if primary_signal in ['STRONG_BUY', 'BUY', 'STRONG_SELL', 'SELL']:
+                self.trade_count[symbol] += 1
+            
+            return primary_signal, price, price_alert
+            
+        except Exception as e:
+            print(f"❌ Error for {symbol}: {e}")
             return "ERROR", None, None
 
-        df['WMA21'] = wma(df['Close'], 21)
-        df['WMA51'] = wma(df['Close'], 51)
-        df['WMA21_PREV'] = df['WMA21'].shift(1)
-        
-        st_period = config.get('st_period', 14)
-        st_multiplier = config.get('st_multiplier', 3.0)
-        
-        df['ST'] = supertrend(df['High'], df['Low'], df['Close'], 
-                              period=st_period, multiplier=st_multiplier)
-        df['ST_PREV'] = df['ST'].shift(1)
-        df.dropna(inplace=True)
-
-        if len(df) == 0:
-            return "ERROR", None, None
-
-        current = df.iloc[-1]
-        price = current['Close']
-        wma21 = current['WMA21']
-        wma51 = current['WMA51']
-        wma21_prev = current['WMA21_PREV']
-        st_now = current['ST']
-        st_prev = current['ST_PREV']
-
-        # Check price change
-        price_alert = None
-        if prev_price is not None:
-            change_pct = ((price - prev_price) / prev_price) * 100
-            threshold = config.get('price_change_threshold', 0.5)
-            if abs(change_pct) >= threshold:
-                price_alert = change_pct
-
-        st_just_turned_green = st_now == 1 and st_prev == -1
-        st_just_turned_red = st_now == -1 and st_prev == 1
-        trend_up = wma21 > wma51 and wma21 > wma21_prev
-        trend_down = wma21 < wma51 and wma21 < wma21_prev
-
-        signal = "HOLD"
-        if st_just_turned_green and trend_up:
-            signal = "BUY"
-        elif st_just_turned_red and trend_down:
-            signal = "SELL"
-
-        return signal, price, price_alert
-
-    except Exception as e:
-        print(f"❌ Error for {symbol}: {e}")
-        return "ERROR", None, None
-
 # ============================================
-# SEND MARKET UPDATE TO TELEGRAM
+# CHECK ALL SYMBOLS
 # ============================================
-def send_market_update():
-    """Send comprehensive market update to Telegram"""
+
+def check_all_symbols():
+    """Check all symbols and send results to Telegram"""
+    engine = SignalEngine()
     results = {}
     current_prices = {}
     
     print(f"\n📊 Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     for symbol in ACTIVE_SYMBOLS:
-        signal, price, alert = check_signal(symbol)
+        signal, price, alert = engine.check_signal(symbol)
         results[symbol] = signal
         if price:
             current_prices[symbol] = price
@@ -364,10 +385,13 @@ def send_market_update():
     
     # Build message
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    message = f"""
-📊 <b>Market Update</b> ⏱ {now}
-━━━━━━━━━━━━━━━━━━━━━━━
-"""
+    message = f"<b>🎯 CASCADE SIGNAL SYSTEM</b>\n"
+    message += f"⏱ {now}\n"
+    message += f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"<i>⚡ RSI(6)+WMA6 → 🔵 SuperTrend → 📊 Volume+Trend</i>\n\n"
+    
+    buy_count = 0
+    sell_count = 0
     
     for symbol in ACTIVE_SYMBOLS:
         config = SYMBOLS_CONFIG[symbol]
@@ -375,156 +399,98 @@ def send_market_update():
         signal = results.get(symbol, "HOLD")
         
         if price:
-            if signal == "BUY":
-                signal_emoji = "🟢 BUY"
-            elif signal == "SELL":
-                signal_emoji = "🔴 SELL"
+            if signal in ["STRONG_BUY", "BUY"]:
+                signal_display = "🟢 <b>BUY</b>"
+                buy_count += 1
+            elif signal in ["STRONG_SELL", "SELL"]:
+                signal_display = "🔴 <b>SELL</b>"
+                sell_count += 1
+            elif signal == "CONSIDER_BUY":
+                signal_display = "🟡 CONSIDER BUY"
+                buy_count += 0.5
+            elif signal == "CONSIDER_SELL":
+                signal_display = "🟡 CONSIDER SELL"
+                sell_count += 0.5
             else:
-                signal_emoji = "⏸️ HOLD"
+                signal_display = "⏸️ HOLD"
             
-            message += f"""
-{config['emoji']} <b>{symbol}</b>
-   Price: ${price:.2f}
-   Signal: {signal_emoji}
-"""
+            message += f"\n{config['emoji']} <b>{config['short']}</b>\n"
+            message += f"   Price: ${price:.2f}\n"
+            message += f"   Signal: {signal_display}\n"
     
-    message += """
-━━━━━━━━━━━━━━━━━━━━━━━
-⏱ Next update in 15 minutes
-🤖 Bot: Active
-"""
+    # Market sentiment
+    sentiment = buy_count - sell_count
+    if sentiment > 1:
+        sentiment_text = "🟢 BULLISH"
+        emoji = "🚀"
+    elif sentiment < -1:
+        sentiment_text = "🔴 BEARISH"
+        emoji = "📉"
+    else:
+        sentiment_text = "🟡 NEUTRAL"
+        emoji = "⏸️"
     
-    # Send to Telegram
-    send_telegram(message, disable_notification=False)
+    message += f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"<b>📊 SENTIMENT: {emoji} {sentiment_text}</b>\n"
+    message += f"   Buys: {buy_count:.1f} | Sells: {sell_count:.1f}\n"
+    
+    message += f"\n━━━━━━━━━━━━━━━━━━━━━━━\n"
+    message += f"⏱ Next update in 15 minutes\n"
+    message += f"🧠 Cascade System: ACTIVE\n"
+    
+    send_telegram(message)
     return results, current_prices
 
 # ============================================
 # MAIN
 # ============================================
-if __name__ == "__main__":
-    print("=" * 60)
-    print("🚀 MULTI-SYMBOL CRYPTO SIGNAL BOT")
-    print("=" * 60)
-    
-    # Step 1: Test Telegram bot connection
-    print("\n📱 Testing Telegram connection...")
-    if not test_telegram_connection():
-        print("❌ Bot token is invalid. Please check TELEGRAM_TOKEN")
-        sys.exit(1)
-    
-    # Step 2: Check if group chat ID is correct
-    print("\n💬 Testing group chat ID...")
-    if not test_group_chat_id():
-        print("\n❌ Failed to send message to group.")
-        print("\n📌 To fix this:")
-        print("1. Add your bot to the group")
-        print("2. Send a message in the group")
-        print("3. Run the get_group_chat_id_manual() function")
-        print("4. Copy the chat ID and update TELEGRAM_CHAT_ID")
-        print("\n🔍 Would you like to find your group chat ID now?")
-        response = input("Type 'y' to find your group ID: ").strip().lower()
-        if response == 'y':
-            get_group_chat_id_manual()
-            print("\n⚠️ Update TELEGRAM_CHAT_ID with your group ID and restart the bot")
-            sys.exit(0)
-        else:
-            sys.exit(1)
-    
-    # Step 3: Send startup message
-    print("\n✅ All good! Starting bot...")
-    send_telegram(f"""
-✅ <b>Trading Bot Started</b> 🚀
-
-🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-📊 Strategy: Supertrend + WMA
-⏱ Updates: Every 15 Minutes
-📈 Monitoring: {', '.join(ACTIVE_SYMBOLS)}
-
-Bot is now active and will send updates here!
-    """)
-    
-    # Step 4: Run initial scan
-    print("\n📊 Running initial scan...")
-    send_market_update()
-    
-    # Step 5: Main loop - every 15 minutes
-    print(f"\n🤖 Bot is running. Updates will be sent to Telegram every 15 minutes.")
-    print("Press Ctrl+C to stop.\n")
-    
-    try:
-        while True:
-            time.sleep(900)  # 15 minutes
-            send_market_update()
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-        send_telegram("🛑 Bot stopped by user")
-
-# ============================================
-# HELPER: Find Group Chat ID (Run this separately)
-# ============================================
-def find_group_id():
-    """Standalone function to find group chat ID"""
-    print("\n🔍 Finding Telegram Group Chat ID...")
-    print("Make sure you've sent a message in the group recently!")
-    print("=" * 50)
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    try:
-        response = requests.get(url)
-        data = response.json()
-        
-        if data.get('ok') and data.get('result'):
-            for update in data['result']:
-                if 'message' in update:
-                    chat = update['message']['chat']
-                    print(f"\n📱 Chat Type: {chat.get('type')}")
-                    print(f"📝 Title: {chat.get('title', 'Private Chat')}")
-                    print(f"🆔 Chat ID: {chat['id']}")
-                    print("-" * 30)
-            
-            print("\n✅ Copy the Chat ID (for groups, it starts with -100)")
-            print("📌 Update TELEGRAM_CHAT_ID with this number")
-        else:
-            print("\n❌ No recent messages found.")
-            print("Steps to fix:")
-            print("1. Add your bot to your group")
-            print("2. Send a message like 'Hello bot' in the group")
-            print("3. Wait 2 seconds")
-            print("4. Run this function again")
-    except Exception as e:
-        print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
-    print("="*60)
-    print("🚀 BTC SUPERTREND TRADING BOT")
-    print("="*60)
+    print("=" * 60)
+    print("🚀 CASCADE SIGNAL SYSTEM")
+    print("⚡ Fast RSI(6)+WMA6 → SuperTrend → Volume+Trend")
+    print("🎯 Multi-Timeframe Analysis Active")
+    print("=" * 60)
     
-    # Start web server for Render
+    # Start web server
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     print("🌐 Web server started for health checks")
     
-    # Check if we need to find group chat ID
-    print("\n🔍 Starting bot with Telegram group:", TELEGRAM_CHAT_ID)
+    # Test connections
+    print("\n📱 Testing Telegram connection...")
+    if not test_telegram_connection():
+        print("❌ Failed to connect to Telegram")
+        sys.exit(1)
+    
+    print("\n💬 Testing group chat ID...")
+    if not test_group_chat_id():
+        print("❌ Failed to send test message")
+        sys.exit(1)
+    
+    print("\n✅ All good! Starting bot...")
     
     # Send startup message
-    send_telegram(f"""
-✅ <b>BTC SuperTrend Trading Bot Started</b>
+    startup_msg = f"""
+✅ <b>CASCADE SIGNAL SYSTEM STARTED</b> 🎯
 
 🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-📊 Strategy: SuperTrend + WMA21 + WMA51
-⏱ Check Interval: Every 15 minutes
-📈 Monitoring: BTCUSD, ETHUSD, PAXGUSD, SOLUSD, SLVONUSD
+⚡ <b>Signal Cascade:</b>
+   Stage 1: <b>Fast RSI(6) + WMA(6)</b> (Early Signal)
+   Stage 2: <b>SuperTrend</b> (Confirmation)
+   Stage 3: <b>Volume + Trend</b> (Final Filter)
 
-Bot is now active and monitoring the markets!
-    """)
+📊 <b>Monitoring:</b> {', '.join(SYMBOLS_CONFIG[s]['short'] for s in ACTIVE_SYMBOLS)}
+🎯 <b>Signal Types:</b> EARLY → CONSIDER → BUY/SELL → STRONG
+
+Bot is now active! 🧠
+    """
+    send_telegram(startup_msg)
     
-    # Run initial check
-    print("\n🔍 Running initial signal check...")
+    print("\n📊 Running initial scan...")
     check_all_symbols()
     
-    # Main loop - every 15 minutes
-    print(f"\n🤖 Bot running. Checks every 15 minutes.")
+    print("\n🤖 Bot is running. Updates will be sent to Telegram every 15 minutes.")
     print("Press Ctrl+C to stop.\n")
     
     try:
@@ -532,5 +498,5 @@ Bot is now active and monitoring the markets!
             time.sleep(900)  # 15 minutes
             check_all_symbols()
     except KeyboardInterrupt:
-        print("\n🛑 Bot stopped")
-        send_telegram("🛑 Bot stopped")
+        print("\n🛑 Bot stopped by user")
+        send_telegram("🛑 Bot stopped by user")
