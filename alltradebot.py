@@ -17,7 +17,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ============================================
 
 
-cd ~/trading-bot
 
 cat > alltradebot.py << 'EOF'
 import os
