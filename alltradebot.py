@@ -17,12 +17,15 @@ from collections import deque
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-5028779191")
 
+print(f"🔑 TELEGRAM_TOKEN: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
+print(f"📱 TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
+
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN not found!")
     sys.exit(1)
 
 # ============================================
-# FLASK APP - ROUTES DEFINED HERE
+# FLASK APP
 # ============================================
 
 app = Flask(__name__)
@@ -36,21 +39,29 @@ def health():
     return "OK", 200
 
 # ============================================
-# TELEGRAM FUNCTIONS
+# TELEGRAM FUNCTIONS WITH DEBUG
 # ============================================
 
 def test_telegram_connection():
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
+        print(f"🔍 Testing Telegram connection...")
         response = requests.get(url, timeout=10)
+        print(f"📡 Response status: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
+            print(f"📊 Response data: {data}")
             if data.get('ok'):
                 print(f"✅ Bot connected: @{data['result']['username']}")
                 return True
+            else:
+                print(f"❌ Bot error: {data}")
+        else:
+            print(f"❌ HTTP Error: {response.status_code} - {response.text}")
         return False
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Connection error: {e}")
         return False
 
 def send_telegram(message, disable_notification=False):
@@ -62,11 +73,16 @@ def send_telegram(message, disable_notification=False):
             'parse_mode': 'HTML',
             'disable_notification': disable_notification
         }
+        print(f"📤 Sending Telegram message...")
         response = requests.post(url, data=payload, timeout=10)
+        print(f"📡 Response status: {response.status_code}")
+        
         if response.status_code == 200:
             print("✅ Telegram message sent")
             return True
-        return False
+        else:
+            print(f"❌ Telegram failed: {response.status_code} - {response.text}")
+            return False
     except Exception as e:
         print(f"❌ Telegram error: {e}")
         return False
@@ -357,7 +373,12 @@ def check_all_symbols():
     message += f"⏱ Next update in 15 minutes\n"
     message += f"🧠 Cascade System: ACTIVE\n"
     
-    send_telegram(message)
+    success = send_telegram(message)
+    if success:
+        print("✅ Market update sent to Telegram")
+    else:
+        print("❌ Failed to send market update")
+    
     return results, current_prices
 
 # ============================================
@@ -374,7 +395,9 @@ def run_bot():
     print("\n📱 Testing Telegram connection...")
     if not test_telegram_connection():
         print("❌ Failed to connect to Telegram")
-        sys.exit(1)
+        print("💡 Check your TELEGRAM_TOKEN in environment variables")
+        print("💡 Make sure the bot token is valid")
+        return
     
     print("\n✅ All good! Starting bot...")
     
@@ -404,7 +427,7 @@ Bot is now active! 🧠
         check_all_symbols()
 
 # ============================================
-# MAIN - START BOT AND FLASK
+# MAIN
 # ============================================
 
 if __name__ == "__main__":
