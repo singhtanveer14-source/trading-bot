@@ -3,9 +3,11 @@ import sys
 import time
 import threading
 import requests
+import numpy as np
 from datetime import datetime, timedelta
 from flask import Flask
 import yfinance as yf
+import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -16,7 +18,7 @@ warnings.filterwarnings('ignore')
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003971188413")
 
-print("🚀 Starting Hybrid Trading Bot...")
+print("🚀 Starting Ultimate Trading Bot...")
 print(f"Token: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
 
 if not TELEGRAM_TOKEN:
@@ -24,10 +26,20 @@ if not TELEGRAM_TOKEN:
     sys.exit(1)
 
 # ============================================
-# ALPHA VANTAGE API KEY
+# API KEYS & CONFIG
 # ============================================
 
 ALPHA_VANTAGE_API_KEY = "I9P5WDYIMQHADXV0"
+
+# Strategy Parameters
+RSI_PERIOD = 14
+WMA_PERIOD = 21
+STOP_LOSS_PCT = 1.5
+TAKE_PROFIT_PCT = 3.75
+
+# Market Hours (IST)
+MARKET_OPEN = 9, 15  # 9:15 AM
+MARKET_CLOSE = 15, 30  # 3:30 PM
 
 # ============================================
 # FLASK APP
@@ -37,7 +49,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Hybrid Trading Bot is Running!"
+    return "✅ Ultimate Trading Bot is Running!"
 
 @app.route('/health')
 def health():
@@ -53,7 +65,7 @@ def force_scan():
             print(f"❌ Scan error: {e}")
             send_telegram(f"⚠️ Scan error: {str(e)[:100]}")
     threading.Thread(target=background_scan).start()
-    return "✅ Scan started! Check Telegram in 2-3 minutes."
+    return "✅ Scan started! Check Telegram."
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -82,11 +94,14 @@ def send_telegram(message):
         return False
 
 # ============================================
-# PRICE CACHE
+# PRICE CACHE & SIGNAL HISTORY
 # ============================================
 
 price_cache = {}
 cache_time = {}
+signal_history = {}
+signal_time = {}
+trade_count = {}
 
 def update_cache(symbol, price):
     price_cache[symbol] = price
@@ -100,8 +115,56 @@ def get_cache_time_str(symbol):
         return cache_time[symbol].strftime('%H:%M')
     return None
 
+def update_signal(symbol, signal, price, rsi, wma, vwap, confidence=0):
+    if symbol not in trade_count:
+        trade_count[symbol] = 0
+    if signal in ['BUY', 'SELL']:
+        trade_count[symbol] += 1
+    
+    signal_history[symbol] = {
+        'signal': signal,
+        'price': price,
+        'rsi': rsi,
+        'wma': wma,
+        'vwap': vwap,
+        'confidence': confidence,
+        'time': datetime.now(),
+        'trade_no': trade_count[symbol]
+    }
+    signal_time[symbol] = datetime.now()
+
+def get_last_signal(symbol):
+    return signal_history.get(symbol)
+
+def get_signal_time_str(symbol):
+    if symbol in signal_time:
+        return signal_time[symbol].strftime('%H:%M')
+    return None
+
 # ============================================
-# CRYPTO - BINANCE + COINGECKO
+# MARKET HOURS CHECK
+# ============================================
+
+def is_market_open():
+    """Check if Indian market is open (9:15 AM - 3:30 PM IST, Mon-Fri)"""
+    now = datetime.now()
+    # Weekday check (0=Monday, 4=Friday)
+    if now.weekday() >= 5:  # Weekend
+        return False
+    # Time check
+    current_time = now.hour * 60 + now.minute
+    open_time = MARKET_OPEN[0] * 60 + MARKET_OPEN[1]
+    close_time = MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1]
+    return open_time <= current_time <= close_time
+
+def get_market_status():
+    if is_market_open():
+        return "🟢 OPEN"
+    else:
+        return "🔴 CLOSED"
+
+# ============================================
+# DATA FETCHERS
 # ============================================
 
 def get_binance(symbol):
@@ -139,19 +202,12 @@ def get_coingecko(symbol):
         pass
     return None
 
-# ============================================
-# GOLD - MULTIPLE SOURCES
-# ============================================
-
-def get_gold_price():
-    """Gold from multiple sources"""
-    
-    # 1. Alpha Vantage
+def get_alpha_vantage(symbol):
     try:
         url = "https://www.alphavantage.co/query"
         params = {
             'function': 'GLOBAL_QUOTE',
-            'symbol': 'XAUUSD',
+            'symbol': symbol,
             'apikey': ALPHA_VANTAGE_API_KEY
         }
         response = requests.get(url, params=params, timeout=10)
@@ -159,12 +215,19 @@ def get_gold_price():
             data = response.json()
             if 'Global Quote' in data and '05. price' in data['Global Quote']:
                 price = float(data['Global Quote']['05. price'])
-                update_cache('GOLD', price)
                 return price
+        return None
+    except:
+        return None
+
+def get_gold_price():
+    try:
+        price = get_alpha_vantage('XAUUSD')
+        if price:
+            update_cache('GOLD', price)
+            return price
     except:
         pass
-    
-    # 2. Gold-API
     try:
         url = "https://api.gold-api.com/price/XAU"
         response = requests.get(url, timeout=5)
@@ -176,46 +239,16 @@ def get_gold_price():
                 return price
     except:
         pass
-    
-    # 3. Yahoo Finance (backup)
+    return get_cached_price('GOLD')
+
+def get_silver_price():
     try:
-        ticker = yf.Ticker('GC=F')
-        data = ticker.history(period="1d", interval="1m")
-        if not data.empty:
-            price = float(data['Close'].iloc[-1])
-            update_cache('GOLD', price)
+        price = get_alpha_vantage('XAGUSD')
+        if price:
+            update_cache('SILVER', price)
             return price
     except:
         pass
-    
-    return get_cached_price('GOLD')
-
-# ============================================
-# SILVER - MULTIPLE SOURCES
-# ============================================
-
-def get_silver_price():
-    """Silver from multiple sources"""
-    
-    # 1. Alpha Vantage
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            'function': 'GLOBAL_QUOTE',
-            'symbol': 'XAGUSD',
-            'apikey': ALPHA_VANTAGE_API_KEY
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if 'Global Quote' in data and '05. price' in data['Global Quote']:
-                price = float(data['Global Quote']['05. price'])
-                update_cache('SILVER', price)
-                return price
-    except:
-        pass
-    
-    # 2. Gold-API
     try:
         url = "https://api.gold-api.com/price/XAG"
         response = requests.get(url, timeout=5)
@@ -227,82 +260,9 @@ def get_silver_price():
                 return price
     except:
         pass
-    
-    # 3. Yahoo Finance (backup)
-    try:
-        ticker = yf.Ticker('SI=F')
-        data = ticker.history(period="1d", interval="1m")
-        if not data.empty:
-            price = float(data['Close'].iloc[-1])
-            update_cache('SILVER', price)
-            return price
-    except:
-        pass
-    
     return get_cached_price('SILVER')
 
-# ============================================
-# CRUDE OIL - MULTIPLE SOURCES
-# ============================================
-
-def get_oil_price():
-    """Crude Oil from multiple sources"""
-    
-    # 1. Alpha Vantage
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            'function': 'GLOBAL_QUOTE',
-            'symbol': 'CL',
-            'apikey': ALPHA_VANTAGE_API_KEY
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if 'Global Quote' in data and '05. price' in data['Global Quote']:
-                price = float(data['Global Quote']['05. price'])
-                update_cache('OIL', price)
-                return price
-    except:
-        pass
-    
-    # 2. Yahoo Finance
-    try:
-        ticker = yf.Ticker('CL=F')
-        data = ticker.history(period="1d", interval="1m")
-        if not data.empty:
-            price = float(data['Close'].iloc[-1])
-            update_cache('OIL', price)
-            return price
-    except:
-        pass
-    
-    # 3. Alpha Vantage with WTI
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            'function': 'GLOBAL_QUOTE',
-            'symbol': 'WTI',
-            'apikey': ALPHA_VANTAGE_API_KEY
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if 'Global Quote' in data and '05. price' in data['Global Quote']:
-                price = float(data['Global Quote']['05. price'])
-                update_cache('OIL', price)
-                return price
-    except:
-        pass
-    
-    return get_cached_price('OIL')
-
-# ============================================
-# INDIAN INDICES - YAHOO FINANCE
-# ============================================
-
 def get_yfinance_price(symbol, cache_key):
-    """Get price from Yahoo Finance"""
     try:
         ticker = yf.Ticker(symbol)
         data = ticker.history(period="1d", interval="1m")
@@ -329,6 +289,128 @@ def get_sensex_price():
     return get_yfinance_price('^BSESN', 'SENSEX')
 
 # ============================================
+# ENHANCED TRADING LOGIC WITH CONFIDENCE
+# ============================================
+
+def calculate_rsi(data, period=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def calculate_wma(data, period=21):
+    weights = np.arange(1, period + 1)
+    def wma_func(x):
+        return np.sum(x * weights) / weights.sum()
+    return data.rolling(period).apply(wma_func, raw=True)
+
+def calculate_vwap(df):
+    typical = (df['High'] + df['Low'] + df['Close']) / 3
+    cum_vol = df['Volume'].cumsum()
+    cum_tpv = (typical * df['Volume']).cumsum()
+    vwap = cum_tpv / cum_vol
+    return vwap
+
+def get_historical_data(symbol, period='7d', interval='1h'):
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period=period, interval=interval)
+        if df.empty:
+            return None
+        # Handle MultiIndex columns
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
+    except:
+        return None
+
+def calculate_confidence(rsi, wma, price, vwap, adx=None):
+    """Calculate confidence score (0-100)"""
+    confidence = 50
+    
+    # RSI strength (0-20 points)
+    rsi_diff = rsi - wma
+    if abs(rsi_diff) > 20:
+        confidence += 20
+    elif abs(rsi_diff) > 10:
+        confidence += 15
+    elif abs(rsi_diff) > 5:
+        confidence += 10
+    
+    # VWAP strength (0-20 points)
+    vwap_diff = (price - vwap) / vwap * 100
+    if abs(vwap_diff) > 2:
+        confidence += 20
+    elif abs(vwap_diff) > 1:
+        confidence += 15
+    elif abs(vwap_diff) > 0.5:
+        confidence += 10
+    
+    # Trend alignment (0-10 points)
+    if (rsi > wma and price > vwap) or (rsi < wma and price < vwap):
+        confidence += 10
+    
+    return min(100, max(0, confidence))
+
+def generate_signal(symbol, price):
+    try:
+        ticker_map = {
+            'BTC': 'BTC-USD',
+            'ETH': 'ETH-USD',
+            'SOL': 'SOL-USD',
+            'GOLD': 'GC=F',
+            'SILVER': 'SI=F',
+            'NIFTY': '^NSEI',
+            'BANKNIFTY': '^NSEBANK',
+            'SENSEX': '^BSESN'
+        }
+        
+        df = get_historical_data(ticker_map.get(symbol, symbol))
+        
+        if df is None or df.empty or len(df) < 30:
+            return None
+        
+        # Calculate indicators
+        df['RSI'] = calculate_rsi(df['Close'], RSI_PERIOD)
+        df['WMA'] = calculate_wma(df['RSI'], WMA_PERIOD)
+        df['VWAP'] = calculate_vwap(df)
+        
+        last = df.iloc[-1]
+        
+        rsi = last['RSI']
+        wma = last['WMA']
+        vwap = last['VWAP']
+        
+        # Signal Logic
+        if rsi > wma and price > vwap:
+            signal = 'BUY'
+        elif rsi < wma and price < vwap:
+            signal = 'SELL'
+        else:
+            signal = 'HOLD'
+        
+        # Calculate confidence
+        confidence = calculate_confidence(rsi, wma, price, vwap)
+        
+        # Update signal history if BUY or SELL
+        if signal in ['BUY', 'SELL']:
+            update_signal(symbol, signal, price, rsi, wma, vwap, confidence)
+        
+        return {
+            'signal': signal,
+            'price': price,
+            'rsi': rsi,
+            'wma': wma,
+            'vwap': vwap,
+            'confidence': confidence
+        }
+    except Exception as e:
+        print(f"Signal error for {symbol}: {e}")
+        return None
+
+# ============================================
 # SYMBOLS
 # ============================================
 
@@ -338,29 +420,28 @@ SYMBOLS = [
     {'key': 'SOL', 'name': 'Solana', 'emoji': '🟠', 'fetcher': lambda: get_binance('SOL') or get_coingecko('SOL')},
     {'key': 'GOLD', 'name': 'Gold', 'emoji': '🥇', 'fetcher': get_gold_price},
     {'key': 'SILVER', 'name': 'Silver', 'emoji': '🥈', 'fetcher': get_silver_price},
-    {'key': 'OIL', 'name': 'Crude Oil', 'emoji': '🛢️', 'fetcher': get_oil_price},
     {'key': 'NIFTY', 'name': 'NIFTY 50', 'emoji': '🇮🇳', 'fetcher': get_nifty_price},
     {'key': 'BANKNIFTY', 'name': 'BANKNIFTY', 'emoji': '🏦', 'fetcher': get_banknifty_price},
     {'key': 'SENSEX', 'name': 'SENSEX', 'emoji': '📊', 'fetcher': get_sensex_price}
 ]
 
 # ============================================
-# SCAN
+# SCAN WITH ENHANCED DISPLAY
 # ============================================
 
 def scan_and_send():
     print(f"\n📊 Scanning at {datetime.now().strftime('%H:%M:%S')}")
     
     today = datetime.now().strftime('%A')
-    is_weekend = datetime.now().weekday() >= 5
-    weekday_status = "🟢 Markets Open" if not is_weekend else "🔴 Markets Closed (Weekend)"
+    market_status = get_market_status()
     
     prices = []
+    signals_list = []
     failed = []
-    cached_list = []
     success_count = 0
+    signal_count = 0
     
-    send_telegram(f"🔄 Market Data | {today}")
+    send_telegram(f"🔄 Market Scan | {today} | {market_status}")
     
     for info in SYMBOLS:
         try:
@@ -370,17 +451,38 @@ def scan_and_send():
             if price and price > 0:
                 success_count += 1
                 
-                # Format price
+                # Get trading signal
+                signal_data = generate_signal(info['key'], price)
+                
+                # Format price line
                 if info['key'] in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
                     price_str = f"{info['emoji']} {info['name']}: {price:,.2f}"
                 else:
                     price_str = f"{info['emoji']} {info['name']}: ${price:,.2f}"
                 
-                # Check if cached
+                # Add current signal with confidence
+                if signal_data and signal_data['signal'] != 'HOLD':
+                    signal_display = '🟢 BUY' if signal_data['signal'] == 'BUY' else '🔴 SELL'
+                    conf = signal_data.get('confidence', 50)
+                    price_str += f" [{signal_display} {conf:.0f}%]"
+                    signal_count += 1
+                    signals_list.append(
+                        f"{info['emoji']} {info['name']}: {signal_display} at ${price:,.2f} "
+                        f"(Confidence: {conf:.0f}%)"
+                    )
+                
+                # Add last triggered signal (from history)
+                last_signal = get_last_signal(info['key'])
+                if last_signal:
+                    last_time = last_signal['time'].strftime('%H:%M')
+                    last_display = '🟢 BUY' if last_signal['signal'] == 'BUY' else '🔴 SELL'
+                    trade_no = last_signal.get('trade_no', 0)
+                    price_str += f" (Last: {last_display} @ ${last_signal['price']:,.2f} at {last_time} | T#{trade_no})"
+                
+                # Add cache time
                 cache_time_str = get_cache_time_str(info['key'])
                 if cache_time_str:
-                    price_str += f" 📊 (Last: {cache_time_str})"
-                    cached_list.append(info['name'])
+                    price_str += f" 📊 (Updated: {cache_time_str})"
                 
                 prices.append(price_str)
                 print(f"    ✅ {price:,.2f}")
@@ -398,14 +500,29 @@ def scan_and_send():
     
     msg = f"📊 <b>MARKET UPDATE</b>\n"
     msg += f"⏱ {now}\n"
-    msg += f"📅 {today}\n"
-    msg += "="*40 + "\n\n"
+    msg += f"📅 {today} | {market_status}\n"
+    msg += "="*45 + "\n\n"
     
     if prices:
         msg += "\n".join(prices)
         msg += f"\n\n✅ Updated: {success_count}/{len(SYMBOLS)} symbols"
     else:
         msg += "⚠️ No prices available"
+    
+    # Add active signals section
+    if signals_list:
+        msg += f"\n\n📈 <b>ACTIVE SIGNALS: {len(signals_list)}</b>\n"
+        msg += "\n".join(signals_list)
+    
+    # Add trade statistics
+    total_trades = sum(trade_count.values())
+    if total_trades > 0:
+        msg += f"\n\n📊 <b>TRADE STATISTICS</b>\n"
+        msg += f"   Total Trades: {total_trades}\n"
+        for key, count in trade_count.items():
+            if count > 0:
+                symbol_name = next((s['name'] for s in SYMBOLS if s['key'] == key), key)
+                msg += f"   {symbol_name}: {count}\n"
     
     if failed:
         msg += f"\n\n❌ Failed: {', '.join(failed)}"
@@ -415,25 +532,28 @@ def scan_and_send():
     send_telegram(msg)
 
 # ============================================
-# MAIN
+# MAIN LOOP
 # ============================================
 
 def main_loop():
     print("\n🔄 Starting main loop...")
     
-    today = datetime.now().strftime('%A')
-    is_weekend = datetime.now().weekday() >= 5
-    
-    send_telegram(f"""
-🚀 <b>HYBRID TRADING BOT</b>
+    send_telegram("""
+🚀 <b>ULTIMATE TRADING BOT</b>
 
-📊 9 Symbols
-📅 {today} {'🔴' if is_weekend else '🟢'}
+📊 8 Symbols with Advanced Trading Signals
+📡 Data: Binance + Alpha Vantage + Yahoo
 
-📡 Data Sources:
-   • Binance: BTC, ETH, SOL
-   • Alpha Vantage: Gold, Silver, Oil
-   • Yahoo Finance: NIFTY, BANKNIFTY, SENSEX
+⚡ Strategy: RSI(14) + WMA21 + VWAP
+🎯 <b>Confidence Scoring</b> (0-100%)
+🛑 Stop Loss: 1.5% | Take Profit: 3.75%
+
+📈 <b>Features:</b>
+   • Real-time Prices
+   • BUY/SELL Signals with Confidence
+   • Last Triggered Trade History
+   • Trade Statistics
+   • Market Status
 
 ⏱ Updates every 15 minutes
     """)
@@ -454,7 +574,7 @@ def main_loop():
 
 if __name__ == "__main__":
     print("="*50)
-    print("🚀 HYBRID TRADING BOT")
+    print("🚀 ULTIMATE TRADING BOT")
     print("="*50)
     
     web_thread = threading.Thread(target=run_web_server, daemon=True)
