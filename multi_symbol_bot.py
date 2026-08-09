@@ -5,11 +5,31 @@ import threading
 import requests
 import numpy as np
 from datetime import datetime, timedelta
+import pytz
 from flask import Flask
 import yfinance as yf
 import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
+
+# ============================================
+# TIMEZONE SETUP - INDIAN STANDARD TIME (IST)
+# ============================================
+
+IST = pytz.timezone('Asia/Kolkata')
+UTC = pytz.UTC
+
+def get_ist_time():
+    """Get current time in IST"""
+    return datetime.now(IST)
+
+def get_ist_time_str():
+    """Get IST time as string"""
+    return get_ist_time().strftime('%Y-%m-%d %H:%M:%S')
+
+def get_ist_time_short():
+    """Get IST time as short string"""
+    return get_ist_time().strftime('%H:%M')
 
 # ============================================
 # TELEGRAM CREDENTIALS
@@ -20,6 +40,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003971188413")
 
 print("🚀 Starting Ultimate Trading Bot...")
 print(f"Token: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
+print(f"🕐 IST Time: {get_ist_time_str()}")
 
 if not TELEGRAM_TOKEN:
     print("❌ No token!")
@@ -38,8 +59,10 @@ STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.75
 
 # Market Hours (IST)
-MARKET_OPEN = 9, 15  # 9:15 AM
-MARKET_CLOSE = 15, 30  # 3:30 PM
+MARKET_OPEN_HOUR = 9
+MARKET_OPEN_MIN = 15
+MARKET_CLOSE_HOUR = 15
+MARKET_CLOSE_MIN = 30
 
 # ============================================
 # FLASK APP
@@ -49,7 +72,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Ultimate Trading Bot is Running!"
+    return f"✅ Ultimate Trading Bot is Running! (IST: {get_ist_time_str()})"
 
 @app.route('/health')
 def health():
@@ -57,7 +80,7 @@ def health():
 
 @app.route('/scan')
 def force_scan():
-    print("🔍 Force scan triggered!")
+    print(f"🔍 Force scan triggered at {get_ist_time_str()}")
     def background_scan():
         try:
             scan_and_send()
@@ -65,7 +88,7 @@ def force_scan():
             print(f"❌ Scan error: {e}")
             send_telegram(f"⚠️ Scan error: {str(e)[:100]}")
     threading.Thread(target=background_scan).start()
-    return "✅ Scan started! Check Telegram."
+    return f"✅ Scan started at {get_ist_time_str()}! Check Telegram."
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -85,7 +108,7 @@ def send_telegram(message):
         }
         response = requests.post(url, data=payload, timeout=10)
         if response.status_code == 200:
-            print("✅ Sent")
+            print(f"✅ Sent at {get_ist_time_short()}")
             return True
         print(f"❌ Failed: {response.status_code}")
         return False
@@ -105,7 +128,7 @@ trade_count = {}
 
 def update_cache(symbol, price):
     price_cache[symbol] = price
-    cache_time[symbol] = datetime.now()
+    cache_time[symbol] = get_ist_time()
 
 def get_cached_price(symbol):
     return price_cache.get(symbol)
@@ -128,10 +151,10 @@ def update_signal(symbol, signal, price, rsi, wma, vwap, confidence=0):
         'wma': wma,
         'vwap': vwap,
         'confidence': confidence,
-        'time': datetime.now(),
+        'time': get_ist_time(),
         'trade_no': trade_count[symbol]
     }
-    signal_time[symbol] = datetime.now()
+    signal_time[symbol] = get_ist_time()
 
 def get_last_signal(symbol):
     return signal_history.get(symbol)
@@ -142,20 +165,20 @@ def get_signal_time_str(symbol):
     return None
 
 # ============================================
-# MARKET HOURS CHECK
+# MARKET HOURS CHECK (IST)
 # ============================================
 
 def is_market_open():
     """Check if Indian market is open (9:15 AM - 3:30 PM IST, Mon-Fri)"""
-    now = datetime.now()
+    now = get_ist_time()
     # Weekday check (0=Monday, 4=Friday)
     if now.weekday() >= 5:  # Weekend
         return False
     # Time check
-    current_time = now.hour * 60 + now.minute
-    open_time = MARKET_OPEN[0] * 60 + MARKET_OPEN[1]
-    close_time = MARKET_CLOSE[0] * 60 + MARKET_CLOSE[1]
-    return open_time <= current_time <= close_time
+    current_minutes = now.hour * 60 + now.minute
+    open_minutes = MARKET_OPEN_HOUR * 60 + MARKET_OPEN_MIN
+    close_minutes = MARKET_CLOSE_HOUR * 60 + MARKET_CLOSE_MIN
+    return open_minutes <= current_minutes <= close_minutes
 
 def get_market_status():
     if is_market_open():
@@ -289,7 +312,7 @@ def get_sensex_price():
     return get_yfinance_price('^BSESN', 'SENSEX')
 
 # ============================================
-# ENHANCED TRADING LOGIC WITH CONFIDENCE
+# ENHANCED TRADING LOGIC
 # ============================================
 
 def calculate_rsi(data, period=14):
@@ -319,18 +342,15 @@ def get_historical_data(symbol, period='7d', interval='1h'):
         df = ticker.history(period=period, interval=interval)
         if df.empty:
             return None
-        # Handle MultiIndex columns
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         return df
     except:
         return None
 
-def calculate_confidence(rsi, wma, price, vwap, adx=None):
-    """Calculate confidence score (0-100)"""
+def calculate_confidence(rsi, wma, price, vwap):
     confidence = 50
     
-    # RSI strength (0-20 points)
     rsi_diff = rsi - wma
     if abs(rsi_diff) > 20:
         confidence += 20
@@ -339,7 +359,6 @@ def calculate_confidence(rsi, wma, price, vwap, adx=None):
     elif abs(rsi_diff) > 5:
         confidence += 10
     
-    # VWAP strength (0-20 points)
     vwap_diff = (price - vwap) / vwap * 100
     if abs(vwap_diff) > 2:
         confidence += 20
@@ -348,7 +367,6 @@ def calculate_confidence(rsi, wma, price, vwap, adx=None):
     elif abs(vwap_diff) > 0.5:
         confidence += 10
     
-    # Trend alignment (0-10 points)
     if (rsi > wma and price > vwap) or (rsi < wma and price < vwap):
         confidence += 10
     
@@ -372,7 +390,6 @@ def generate_signal(symbol, price):
         if df is None or df.empty or len(df) < 30:
             return None
         
-        # Calculate indicators
         df['RSI'] = calculate_rsi(df['Close'], RSI_PERIOD)
         df['WMA'] = calculate_wma(df['RSI'], WMA_PERIOD)
         df['VWAP'] = calculate_vwap(df)
@@ -383,7 +400,6 @@ def generate_signal(symbol, price):
         wma = last['WMA']
         vwap = last['VWAP']
         
-        # Signal Logic
         if rsi > wma and price > vwap:
             signal = 'BUY'
         elif rsi < wma and price < vwap:
@@ -391,10 +407,8 @@ def generate_signal(symbol, price):
         else:
             signal = 'HOLD'
         
-        # Calculate confidence
         confidence = calculate_confidence(rsi, wma, price, vwap)
         
-        # Update signal history if BUY or SELL
         if signal in ['BUY', 'SELL']:
             update_signal(symbol, signal, price, rsi, wma, vwap, confidence)
         
@@ -426,13 +440,14 @@ SYMBOLS = [
 ]
 
 # ============================================
-# SCAN WITH ENHANCED DISPLAY
+# SCAN WITH IST TIME
 # ============================================
 
 def scan_and_send():
-    print(f"\n📊 Scanning at {datetime.now().strftime('%H:%M:%S')}")
+    ist_now = get_ist_time()
+    print(f"\n📊 Scanning at {ist_now.strftime('%H:%M:%S')} IST")
     
-    today = datetime.now().strftime('%A')
+    today = ist_now.strftime('%A')
     market_status = get_market_status()
     
     prices = []
@@ -441,7 +456,7 @@ def scan_and_send():
     success_count = 0
     signal_count = 0
     
-    send_telegram(f"🔄 Market Scan | {today} | {market_status}")
+    send_telegram(f"🔄 Market Scan | {today} | {market_status} | IST: {ist_now.strftime('%H:%M')}")
     
     for info in SYMBOLS:
         try:
@@ -451,16 +466,13 @@ def scan_and_send():
             if price and price > 0:
                 success_count += 1
                 
-                # Get trading signal
                 signal_data = generate_signal(info['key'], price)
                 
-                # Format price line
                 if info['key'] in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
                     price_str = f"{info['emoji']} {info['name']}: {price:,.2f}"
                 else:
                     price_str = f"{info['emoji']} {info['name']}: ${price:,.2f}"
                 
-                # Add current signal with confidence
                 if signal_data and signal_data['signal'] != 'HOLD':
                     signal_display = '🟢 BUY' if signal_data['signal'] == 'BUY' else '🔴 SELL'
                     conf = signal_data.get('confidence', 50)
@@ -471,7 +483,6 @@ def scan_and_send():
                         f"(Confidence: {conf:.0f}%)"
                     )
                 
-                # Add last triggered signal (from history)
                 last_signal = get_last_signal(info['key'])
                 if last_signal:
                     last_time = last_signal['time'].strftime('%H:%M')
@@ -479,10 +490,9 @@ def scan_and_send():
                     trade_no = last_signal.get('trade_no', 0)
                     price_str += f" (Last: {last_display} @ ${last_signal['price']:,.2f} at {last_time} | T#{trade_no})"
                 
-                # Add cache time
                 cache_time_str = get_cache_time_str(info['key'])
                 if cache_time_str:
-                    price_str += f" 📊 (Updated: {cache_time_str})"
+                    price_str += f" 📊 (Updated: {cache_time_str} IST)"
                 
                 prices.append(price_str)
                 print(f"    ✅ {price:,.2f}")
@@ -495,11 +505,11 @@ def scan_and_send():
         
         time.sleep(12)
     
-    # Build message
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # Build message with IST time
+    now = ist_now.strftime('%Y-%m-%d %H:%M:%S')
     
     msg = f"📊 <b>MARKET UPDATE</b>\n"
-    msg += f"⏱ {now}\n"
+    msg += f"⏱ {now} <b>IST</b>\n"
     msg += f"📅 {today} | {market_status}\n"
     msg += "="*45 + "\n\n"
     
@@ -509,12 +519,10 @@ def scan_and_send():
     else:
         msg += "⚠️ No prices available"
     
-    # Add active signals section
     if signals_list:
         msg += f"\n\n📈 <b>ACTIVE SIGNALS: {len(signals_list)}</b>\n"
         msg += "\n".join(signals_list)
     
-    # Add trade statistics
     total_trades = sum(trade_count.values())
     if total_trades > 0:
         msg += f"\n\n📊 <b>TRADE STATISTICS</b>\n"
@@ -527,7 +535,7 @@ def scan_and_send():
     if failed:
         msg += f"\n\n❌ Failed: {', '.join(failed)}"
     
-    msg += "\n\n⏱ Next update in 15 minutes"
+    msg += f"\n\n⏱ Next update at {(ist_now + timedelta(minutes=15)).strftime('%H:%M')} IST"
     
     send_telegram(msg)
 
@@ -538,22 +546,27 @@ def scan_and_send():
 def main_loop():
     print("\n🔄 Starting main loop...")
     
-    send_telegram("""
+    ist_now = get_ist_time()
+    
+    send_telegram(f"""
 🚀 <b>ULTIMATE TRADING BOT</b>
+
+🕐 <b>Indian Standard Time (IST)</b>
+   Current: {ist_now.strftime('%Y-%m-%d %H:%M:%S')}
 
 📊 8 Symbols with Advanced Trading Signals
 📡 Data: Binance + Alpha Vantage + Yahoo
 
 ⚡ Strategy: RSI(14) + WMA21 + VWAP
-🎯 <b>Confidence Scoring</b> (0-100%)
+🎯 Confidence Scoring (0-100%)
 🛑 Stop Loss: 1.5% | Take Profit: 3.75%
 
-📈 <b>Features:</b>
-   • Real-time Prices
+📈 Features:
+   • Real-time Prices (IST)
    • BUY/SELL Signals with Confidence
    • Last Triggered Trade History
    • Trade Statistics
-   • Market Status
+   • Market Status (IST)
 
 ⏱ Updates every 15 minutes
     """)
@@ -565,7 +578,7 @@ def main_loop():
     while True:
         time.sleep(900)
         loop_count += 1
-        print(f"\n🔄 Loop #{loop_count}")
+        print(f"\n🔄 Loop #{loop_count} at {get_ist_time_str()}")
         scan_and_send()
 
 # ============================================
@@ -574,7 +587,8 @@ def main_loop():
 
 if __name__ == "__main__":
     print("="*50)
-    print("🚀 ULTIMATE TRADING BOT")
+    print("🚀 ULTIMATE TRADING BOT - IST")
+    print(f"🕐 Current IST: {get_ist_time_str()}")
     print("="*50)
     
     web_thread = threading.Thread(target=run_web_server, daemon=True)
