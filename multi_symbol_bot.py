@@ -3,10 +3,9 @@ import sys
 import time
 import threading
 import requests
-from datetime import datetime, timedelta
+import json
+from datetime import datetime
 from flask import Flask
-import yfinance as yf
-import pandas as pd
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -17,7 +16,7 @@ warnings.filterwarnings('ignore')
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003971188413")
 
-print("🚀 Starting Trading Bot...")
+print("🚀 Starting Bot...")
 print(f"Token: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
 print(f"Chat ID: {TELEGRAM_CHAT_ID}")
 
@@ -39,15 +38,10 @@ def home():
 def health():
     return "OK", 200
 
-@app.route('/send')
-def send_test():
-    result = send_telegram("🧪 Bot is working!")
-    return "✅ Sent!" if result else "❌ Failed", 500
-
 @app.route('/scan')
 def force_scan():
     print("🔍 Force scan triggered!")
-    scan_and_send(force=True)
+    scan_and_send()
     return "✅ Scan completed! Check Telegram."
 
 def run_web_server():
@@ -77,245 +71,190 @@ def send_telegram(message):
         return False
 
 # ============================================
-# STRATEGY PARAMETERS
+# DATA SOURCES - WORKING
 # ============================================
 
-RSI_PERIOD = 14
-WMA_PERIOD = 21
-STOP_LOSS_PCT = 1.5
-TAKE_PROFIT_PCT = 3.75
+def get_price_binance(symbol):
+    """Get crypto price from Binance API"""
+    try:
+        # Convert symbol format
+        if symbol == 'BTC-USD':
+            binance_symbol = 'BTCUSDT'
+        elif symbol == 'ETH-USD':
+            binance_symbol = 'ETHUSDT'
+        elif symbol == 'SOL-USD':
+            binance_symbol = 'SOLUSDT'
+        else:
+            return None
+        
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return float(data['price'])
+        return None
+    except Exception as e:
+        print(f"  Binance error: {e}")
+        return None
+
+def get_price_coingecko(symbol):
+    """Get crypto price from CoinGecko API"""
+    try:
+        # Map symbols
+        if symbol == 'BTC-USD':
+            coin_id = 'bitcoin'
+        elif symbol == 'ETH-USD':
+            coin_id = 'ethereum'
+        elif symbol == 'SOL-USD':
+            coin_id = 'solana'
+        else:
+            return None
+        
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return float(data[coin_id]['usd'])
+        return None
+    except Exception as e:
+        print(f"  Coingecko error: {e}")
+        return None
+
+def get_price_yahoo(symbol):
+    """Get price from Yahoo (for commodities and indices)"""
+    try:
+        import yfinance as yf
+        df = yf.download(symbol, period='1d', interval='1m', progress=False)
+        if not df.empty:
+            return float(df['Close'].iloc[-1])
+        return None
+    except:
+        return None
+
+def get_price_alpha_vantage(symbol):
+    """Get price from Alpha Vantage (for indices)"""
+    try:
+        # Map symbols
+        alpha_symbols = {
+            '^NSEI': 'NSEI',
+            '^NSEBANK': 'NSEBANK',
+            '^BSESN': 'BSESN'
+        }
+        if symbol not in alpha_symbols:
+            return None
+        
+        # Try Yahoo first for indices
+        return get_price_yahoo(symbol)
+    except:
+        return None
 
 # ============================================
-# SYMBOLS
+# SYMBOLS CONFIG
 # ============================================
 
 SYMBOLS = {
-    'BTC-USD': {'name': 'Bitcoin', 'emoji': '🟢'},
-    'ETH-USD': {'name': 'Ethereum', 'emoji': '🟣'},
-    'SOL-USD': {'name': 'Solana', 'emoji': '🟠'},
-    'GC=F': {'name': 'Gold', 'emoji': '🥇'},
-    'SI=F': {'name': 'Silver', 'emoji': '🥈'},
-    'CL=F': {'name': 'Crude Oil', 'emoji': '🛢️'},
-    '^NSEI': {'name': 'NIFTY 50', 'emoji': '🇮🇳'},
-    '^NSEBANK': {'name': 'BANKNIFTY', 'emoji': '🏦'},
-    '^BSESN': {'name': 'SENSEX', 'emoji': '📊'}
+    'BTC-USD': {'name': 'Bitcoin', 'emoji': '🟢', 'type': 'crypto'},
+    'ETH-USD': {'name': 'Ethereum', 'emoji': '🟣', 'type': 'crypto'},
+    'SOL-USD': {'name': 'Solana', 'emoji': '🟠', 'type': 'crypto'},
+    'GC=F': {'name': 'Gold', 'emoji': '🥇', 'type': 'commodity'},
+    'SI=F': {'name': 'Silver', 'emoji': '🥈', 'type': 'commodity'},
+    'CL=F': {'name': 'Crude Oil', 'emoji': '🛢️', 'type': 'commodity'},
+    '^NSEI': {'name': 'NIFTY 50', 'emoji': '🇮🇳', 'type': 'index'},
+    '^NSEBANK': {'name': 'BANKNIFTY', 'emoji': '🏦', 'type': 'index'},
+    '^BSESN': {'name': 'SENSEX', 'emoji': '📊', 'type': 'index'}
 }
 
 # ============================================
-# SIGNAL HISTORY
+# GET PRICE - MULTI SOURCE
 # ============================================
 
-last_signals = {}
-
-def update_signal(symbol, signal, price, rsi, wma, vwap):
-    last_signals[symbol] = {
-        'signal': signal,
-        'price': price,
-        'rsi': rsi,
-        'wma': wma,
-        'vwap': vwap,
-        'time': datetime.now()
-    }
-
-def get_last_signal(symbol):
-    return last_signals.get(symbol)
-
-# ============================================
-# STRATEGY CALCULATIONS
-# ============================================
-
-def calculate_strategy(df, symbol):
-    """Calculate RSI, WMA, VWAP and generate signal"""
+def get_price(symbol, symbol_info):
+    """Get price using multiple sources"""
     
-    if df is None or df.empty or len(df) < 30:
-        return None
+    price = None
+    source = None
     
-    close = df['Close'].values
-    high = df['High'].values
-    low = df['Low'].values
-    volume = df['Volume'].values
-    n = len(close)
-    
-    # RSI
-    rsi = [50.0] * n
-    for i in range(min(RSI_PERIOD, n), n):
-        gain = 0
-        loss = 0
-        for j in range(max(0, i-RSI_PERIOD+1), i+1):
-            change = close[j] - close[j-1]
-            if change > 0:
-                gain += change
-            else:
-                loss += abs(change)
-        avg_gain = gain / RSI_PERIOD
-        avg_loss = loss / RSI_PERIOD
-        if avg_loss == 0:
-            rsi[i] = 100
-        else:
-            rs = avg_gain / avg_loss
-            rsi[i] = 100 - (100 / (1 + rs))
-    
-    # WMA on RSI
-    wma_rsi = [0.0] * n
-    weights = list(range(1, min(WMA_PERIOD, 22)))
-    weight_sum = sum(weights)
-    for i in range(min(WMA_PERIOD-1, n-1), n):
-        if i >= WMA_PERIOD-1:
-            wma_sum = 0
-            for j in range(WMA_PERIOD):
-                wma_sum += rsi[i-j] * weights[WMA_PERIOD-1-j]
-            wma_rsi[i] = wma_sum / weight_sum
-    
-    # VWAP
-    vwap = [0.0] * n
-    cum_vol = 0
-    cum_tpv = 0
-    for i in range(n):
-        typical = (high[i] + low[i] + close[i]) / 3
-        cum_vol += volume[i]
-        cum_tpv += volume[i] * typical
-        if cum_vol > 0:
-            vwap[i] = cum_tpv / cum_vol
-    
-    current_idx = n - 1
-    current_close = close[current_idx]
-    current_rsi = rsi[current_idx]
-    current_wma = wma_rsi[current_idx]
-    current_vwap = vwap[current_idx]
-    
-    # STRATEGY LOGIC
-    signal = 'HOLD'
-    
-    # BUY: RSI > WMA AND Price > VWAP
-    if current_rsi > current_wma and current_close > current_vwap:
-        signal = 'BUY'
-    # SELL: RSI < WMA AND Price < VWAP
-    elif current_rsi < current_wma and current_close < current_vwap:
-        signal = 'SELL'
-    
-    # Update history if signal
-    if signal in ['BUY', 'SELL']:
-        update_signal(symbol, signal, current_close, current_rsi, current_wma, current_vwap)
-    
-    return {
-        'price': current_close,
-        'rsi': current_rsi,
-        'wma': current_wma,
-        'vwap': current_vwap,
-        'signal': signal,
-        'timestamp': datetime.now()
-    }
-
-# ============================================
-# FETCH DATA
-# ============================================
-
-def fetch_data(symbol):
-    """Fetch data for strategy"""
-    try:
-        # Try 1h data
-        df = yf.download(symbol, period='3d', interval='1h', progress=False)
-        if not df.empty and len(df) >= 30:
-            return df
+    if symbol_info['type'] == 'crypto':
+        # Try Binance first
+        price = get_price_binance(symbol)
+        source = 'Binance'
         
-        # Fallback to 15m
-        df = yf.download(symbol, period='2d', interval='15m', progress=False)
-        if not df.empty and len(df) >= 30:
-            return df
+        # If Binance fails, try CoinGecko
+        if price is None:
+            price = get_price_coingecko(symbol)
+            source = 'CoinGecko'
         
-        # Fallback to 1d
-        df = yf.download(symbol, period='30d', interval='1d', progress=False)
-        if not df.empty and len(df) >= 30:
-            return df
-        
-        return None
-    except Exception as e:
-        print(f"  Error fetching {symbol}: {e}")
-        return None
+        # If all fail, try Yahoo
+        if price is None:
+            price = get_price_yahoo(symbol)
+            source = 'Yahoo'
+    
+    elif symbol_info['type'] in ['commodity', 'index']:
+        # Try Yahoo first
+        price = get_price_yahoo(symbol)
+        source = 'Yahoo'
+    
+    return price, source
 
 # ============================================
 # SCAN AND SEND
 # ============================================
 
-def scan_and_send(force=False):
+def scan_and_send():
     print(f"\n📊 Scanning at {datetime.now().strftime('%H:%M:%S')}")
     
     prices = []
-    signals = []
     errors = []
+    success_count = 0
+    
+    # Send heartbeat
+    send_telegram(f"🔄 Scanning markets... ({datetime.now().strftime('%H:%M')})")
     
     for symbol, info in SYMBOLS.items():
         try:
             print(f"  Fetching {info['name']}...")
-            df = fetch_data(symbol)
             
-            if df is None:
+            price, source = get_price(symbol, info)
+            
+            if price:
+                success_count += 1
+                if info['type'] == 'index':
+                    prices.append(f"{info['emoji']} {info['name']}: {price:,.2f} [{source}]")
+                else:
+                    prices.append(f"{info['emoji']} {info['name']}: ${price:,.2f} [{source}]")
+                print(f"    ✅ ${price:,.2f} ({source})")
+            else:
                 errors.append(f"❌ {info['name']}: No data")
-                continue
-            
-            result = calculate_strategy(df, symbol)
-            
-            if result is None:
-                errors.append(f"❌ {info['name']}: Calculation failed")
-                continue
-            
-            price = result['price']
-            signal = result['signal']
-            emoji = info['emoji']
-            name = info['name']
-            
-            # Price line with signal
-            signal_display = '🟢 BUY' if signal == 'BUY' else '🔴 SELL' if signal == 'SELL' else '⏸️ HOLD'
-            price_line = f"{emoji} {name}: ${price:,.2f} [{signal_display}]"
-            
-            # Add last signal
-            last = get_last_signal(symbol)
-            if last and last['signal'] != 'HOLD':
-                last_time = last['time'].strftime('%H:%M')
-                last_signal = '🟢 BUY' if last['signal'] == 'BUY' else '🔴 SELL'
-                price_line += f" (Last: {last_signal} @ ${last['price']:,.2f} at {last_time})"
-            
-            prices.append(price_line)
-            
-            # Signal alert
-            if signal != 'HOLD':
-                stop = price * (1 - STOP_LOSS_PCT/100)
-                target = price * (1 + TAKE_PROFIT_PCT/100)
-                signal_emoji = '🟢 BUY' if signal == 'BUY' else '🔴 SELL'
+                print(f"    ❌ No data")
                 
-                signals.append(f"""
-{emoji} <b>{name}</b>
-📈 Signal: {signal_emoji}
-💰 Entry: ${price:,.2f}
-🛑 Stop Loss: ${stop:,.2f} (1.5%)
-🎯 Take Profit: ${target:,.2f} (3.75%)
-📊 RSI: {result['rsi']:.1f} | WMA: {result['wma']:.1f}
-📊 VWAP: ${result['vwap']:,.2f}
-""")
-            
         except Exception as e:
-            errors.append(f"❌ {info['name']}: {str(e)[:30]}")
-            print(f"  ❌ {e}")
+            errors.append(f"❌ {info['name']}: Error")
+            print(f"    ❌ {e}")
         
-        time.sleep(0.3)
+        time.sleep(0.5)
     
     # Build message
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # PRICE UPDATE
-    price_msg = f"📊 <b>MARKET UPDATE</b>\n⏱ {now}\n{'='*40}\n\n"
-    price_msg += "\n".join(prices) if prices else "⚠️ No prices"
-    price_msg += f"\n\n✅ Updated: {len(prices)}/{len(SYMBOLS)} symbols"
-    price_msg += f"\n📈 New Signals: {len(signals)}"
-    price_msg += "\n⏱ Next update in 15 minutes"
+    msg = "📊 <b>MARKET UPDATE</b>\n"
+    msg += f"⏱ {now}\n"
+    msg += "="*40 + "\n\n"
     
-    send_telegram(price_msg)
+    if prices:
+        msg += "\n".join(prices)
+        msg += f"\n\n✅ Updated: {success_count}/{len(SYMBOLS)} symbols"
+    else:
+        msg += "⚠️ No prices fetched\n"
+        msg += "\nPossible issues:\n"
+        msg += "• Yahoo Finance may be blocking Render IP\n"
+        msg += "• Trying alternative sources..."
     
-    # SIGNAL ALERTS
-    if signals:
-        for signal_msg in signals:
-            send_telegram("🎯 <b>⚠️ SIGNAL ALERT</b>\n" + signal_msg)
-            time.sleep(0.5)
+    if errors and len(errors) <= 3:
+        msg += "\n\n⚠️ Errors:\n" + "\n".join(errors)
+    
+    msg += "\n\n⏱ Next update in 15 minutes"
+    
+    send_telegram(msg)
 
 # ============================================
 # MAIN LOOP
@@ -328,9 +267,10 @@ def main_loop():
 🚀 <b>TRADING BOT STARTED</b>
 
 📊 Monitoring 9 symbols
-⚡ Strategy: RSI(14) vs WMA21(RSI) + VWAP
-🛑 Stop Loss: 1.5%
-🎯 Take Profit: 3.75%
+🔄 Multi-source data:
+   • Binance (Crypto)
+   • CoinGecko (Crypto)  
+   • Yahoo (Commodities/Indices)
 
 ⏱ Updates every 15 minutes
     """)
