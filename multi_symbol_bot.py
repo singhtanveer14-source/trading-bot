@@ -43,6 +43,13 @@ def send_test():
     result = send_telegram("🧪 Bot is working!")
     return "✅ Sent!" if result else "❌ Failed", 500
 
+@app.route('/scan')
+def force_scan():
+    """Force immediate scan and send results"""
+    print("🔍 Force scan triggered!")
+    scan_and_send(force=True)
+    return "✅ Scan completed! Check Telegram."
+
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
@@ -59,6 +66,7 @@ def send_telegram(message):
             'text': message,
             'parse_mode': 'HTML'
         }
+        print(f"📤 Sending: {message[:50]}...")
         response = requests.post(url, data=payload, timeout=10)
         if response.status_code == 200:
             print("✅ Sent")
@@ -75,7 +83,7 @@ def send_telegram(message):
 
 SYMBOLS = {
     'BTC-USD': 'Bitcoin',
-    'ETH-USD': 'Ethereum',
+    'ETH-USD': 'Ethereum', 
     'SOL-USD': 'Solana',
     'GC=F': 'Gold',
     'SI=F': 'Silver',
@@ -86,50 +94,81 @@ SYMBOLS = {
 }
 
 # ============================================
-# SCAN
+# SCAN FUNCTION WITH DEBUG
 # ============================================
 
-def scan_and_send():
+def scan_and_send(force=False):
     print(f"\n📊 Scanning at {datetime.now().strftime('%H:%M:%S')}")
     
+    # Send a heartbeat message first
+    heartbeat = f"🔄 Bot is scanning... ({datetime.now().strftime('%H:%M:%S')})"
+    send_telegram(heartbeat)
+    
     prices = []
+    errors = []
     
     for symbol, name in SYMBOLS.items():
         try:
-            df = yf.download(symbol, period='1d', interval='1h', progress=False)
+            print(f"  Fetching {name} ({symbol})...")
+            df = yf.download(symbol, period='2d', interval='1h', progress=False)
+            
             if df.empty:
+                errors.append(f"❌ {name}: No data")
+                print(f"    ❌ No data")
                 continue
-            price = df['Close'].iloc[-1]
+                
+            price = float(df['Close'].iloc[-1])
             prices.append(f"✅ {name}: ${price:,.2f}")
-            time.sleep(0.2)
+            print(f"    ✅ ${price:,.2f}")
+            
         except Exception as e:
-            print(f"❌ {name}: {e}")
+            error_msg = f"❌ {name}: {str(e)[:50]}"
+            errors.append(error_msg)
+            print(f"    ❌ {e}")
+        
+        time.sleep(0.3)  # Rate limit
     
+    # Build message
     msg = "📊 MARKET UPDATE\n"
     msg += f"⏱ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
     msg += "="*30 + "\n\n"
-    msg += "\n".join(prices)
-    msg += "\n\n⏱ Next update in 15 minutes"
+    
+    if prices:
+        msg += "\n".join(prices)
+    else:
+        msg += "❌ No prices fetched"
+    
+    if errors:
+        msg += "\n\n⚠️ Errors:\n" + "\n".join(errors[:3])
+    
+    msg += f"\n\n📈 {len(prices)}/{len(SYMBOLS)} symbols updated"
+    msg += "\n⏱ Next update in 15 minutes"
     
     send_telegram(msg)
 
 # ============================================
-# MAIN LOOP
+# MAIN LOOP WITH DEBUG
 # ============================================
 
 def main_loop():
-    print("\n🔄 Starting loop...")
+    print("\n🔄 Starting main loop...")
     
     # Send startup
-    send_telegram("🚀 Bot Started!\n\nMonitoring 9 symbols\nUpdates every 15 minutes")
+    send_telegram("🚀 Bot Started!\n\nMonitoring 9 symbols\nUpdates every 15 minutes\n\nTest /scan to force update")
     
-    # First scan
+    # First scan after 5 seconds (give time to initialize)
+    print("⏳ Waiting 5 seconds before first scan...")
+    time.sleep(5)
     scan_and_send()
     
     # Loop
+    loop_count = 0
     while True:
         time.sleep(900)  # 15 minutes
+        loop_count += 1
+        print(f"\n🔄 Loop #{loop_count}")
         scan_and_send()
+        print(f"✅ Loop #{loop_count} complete")
 
 # ============================================
 # RUN
