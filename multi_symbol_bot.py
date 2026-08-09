@@ -1,5 +1,6 @@
 # ============================================
-# MULTI-SYMBOL SIGNAL BOT - WORKING TELEGRAM
+# MULTI-SYMBOL SIGNAL BOT - WITH SIGNAL HISTORY
+# BTCUSD, ETHUSD, SOLUSD, XAUUSD, XAGUSD, USOIL, NIFTY, BANKNIFTY, SENSEX
 # ============================================
 
 import os
@@ -15,7 +16,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================
-# TELEGRAM CREDENTIALS - READ FROM ENV
+# TELEGRAM CREDENTIALS
 # ============================================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -44,7 +45,6 @@ def health():
 
 @app.route('/test-telegram')
 def test_telegram():
-    """Test Telegram connection"""
     print("🧪 Test endpoint called!")
     result = send_telegram("🧪 Test message from multi-symbol bot! Bot is active!")
     if result:
@@ -78,22 +78,42 @@ STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.75
 
 # ============================================
-# TELEGRAM FUNCTIONS - FIXED
+# SIGNAL HISTORY TRACKING
+# ============================================
+
+# Store last signal for each symbol
+last_signals = {}
+
+def update_signal_history(symbol, signal, price, rsi, wma, vwap):
+    """Update the last signal for a symbol"""
+    last_signals[symbol] = {
+        'signal': signal,
+        'price': price,
+        'rsi': rsi,
+        'wma': wma,
+        'vwap': vwap,
+        'time': datetime.now()
+    }
+
+def get_last_signal(symbol):
+    """Get the last signal for a symbol"""
+    if symbol in last_signals:
+        return last_signals[symbol]
+    return None
+
+# ============================================
+# TELEGRAM FUNCTIONS
 # ============================================
 
 def test_telegram_connection():
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
-        print(f"🔍 Testing Telegram connection...")
         response = requests.get(url, timeout=10)
-        print(f"📡 Response status: {response.status_code}")
-        
         if response.status_code == 200:
             data = response.json()
             if data.get('ok'):
                 print(f"✅ Bot connected: @{data['result']['username']}")
                 return True
-        print(f"❌ Bot connection failed: {response.text}")
         return False
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -108,29 +128,14 @@ def send_telegram(message, disable_notification=False):
             'parse_mode': 'HTML',
             'disable_notification': disable_notification
         }
-        
-        print(f"📤 Sending Telegram message...")
-        print(f"📝 Chat ID: {TELEGRAM_CHAT_ID}")
-        print(f"📝 Message preview: {message[:50]}...")
-        
         response = requests.post(url, data=payload, timeout=10)
-        print(f"📡 Response status: {response.status_code}")
-        print(f"📡 Response text: {response.text[:200]}")
-        
         if response.status_code == 200:
-            data = response.json()
-            if data.get('ok'):
-                print("✅ Telegram message sent!")
-                return True
-            else:
-                print(f"❌ Telegram API error: {data}")
-                return False
-        else:
-            print(f"❌ HTTP Error: {response.status_code}")
-            return False
-            
+            print("✅ Telegram message sent")
+            return True
+        print(f"❌ Failed: {response.status_code}")
+        return False
     except Exception as e:
-        print(f"❌ Telegram error: {e}")
+        print(f"❌ Error: {e}")
         return False
 
 # ============================================
@@ -151,7 +156,7 @@ def get_latest_data(symbol):
         if hasattr(df_1h, 'columns') and isinstance(df_1h.columns, pd.MultiIndex):
             df_1h.columns = df_1h.columns.get_level_values(0)
         
-        return df_1h, None  # 15M data optional
+        return df_1h, None
     except Exception as e:
         print(f"❌ Error fetching {symbol}: {e}")
         return None, None
@@ -168,7 +173,6 @@ def calculate_signals(df_1h, df_15m, symbol):
     high_1h = df_1h['High'].values.flatten().tolist()
     low_1h = df_1h['Low'].values.flatten().tolist()
     volume_1h = df_1h['Volume'].values.flatten().tolist()
-    dates_1h = df_1h.index.tolist()
     n_1h = len(close_1h)
     
     if n_1h < 30:
@@ -233,9 +237,15 @@ def calculate_signals(df_1h, df_15m, symbol):
     is_buy = buy_signal[-1]
     is_sell = sell_signal[-1]
     
+    signal = 'BUY' if is_buy else 'SELL' if is_sell else 'HOLD'
+    
+    # Update signal history if signal is BUY or SELL
+    if signal in ['BUY', 'SELL']:
+        update_signal_history(symbol, signal, current_close, current_rsi, current_wma, current_vwap)
+    
     return {
         'symbol': symbol,
-        'signal': 'BUY' if is_buy else 'SELL' if is_sell else 'HOLD',
+        'signal': signal,
         'price': current_close,
         'rsi': current_rsi,
         'wma': current_wma,
@@ -244,15 +254,17 @@ def calculate_signals(df_1h, df_15m, symbol):
     }
 
 # ============================================
-# SCAN AND SEND ALERTS
+# SCAN AND SEND ALERTS - WITH SIGNAL HISTORY
 # ============================================
 
 def scan_and_alert():
-    """Scan all symbols and send Telegram alerts"""
+    """Scan all symbols and send Telegram alerts with prices and last signals"""
     
     print(f"\n📊 Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
+    all_prices = []
     alert_messages = []
+    price_msg = ""
     
     for symbol, config in SYMBOLS.items():
         print(f"  Scanning {config['emoji']} {config['name']}...")
@@ -269,15 +281,39 @@ def scan_and_alert():
             print(f"    ❌ Calculation failed")
             continue
         
-        if result['signal'] != 'HOLD':
-            emoji = config['emoji']
-            name = config['name']
-            price = result['price']
-            signal = result['signal']
-            rsi = result['rsi']
-            wma = result['wma']
-            vwap = result['vwap']
-            
+        # Get data
+        price = result['price']
+        signal = result['signal']
+        rsi = result['rsi']
+        wma = result['wma']
+        vwap = result['vwap']
+        emoji = config['emoji']
+        name = config['name']
+        
+        # Get last signal for this symbol
+        last_signal = get_last_signal(symbol)
+        
+        # Price update with signal info
+        if signal == 'BUY':
+            signal_display = '🟢 BUY'
+        elif signal == 'SELL':
+            signal_display = '🔴 SELL'
+        else:
+            signal_display = '⏸️ HOLD'
+        
+        # Build price line with signal
+        price_line = f"{emoji} {name}: ${price:,.2f} [{signal_display}]"
+        
+        # Add last signal info if exists
+        if last_signal and last_signal['signal'] != 'HOLD':
+            last_time = last_signal['time'].strftime('%H:%M')
+            last_signal_display = '🟢 BUY' if last_signal['signal'] == 'BUY' else '🔴 SELL'
+            price_line += f" (Last: {last_signal_display} @ ${last_signal['price']:,.2f} at {last_time})"
+        
+        all_prices.append(price_line)
+        
+        # If signal found, create alert
+        if signal != 'HOLD':
             if signal == 'BUY':
                 stop = price * (1 - STOP_LOSS_PCT/100)
                 target = price * (1 + TAKE_PROFIT_PCT/100)
@@ -301,18 +337,55 @@ def scan_and_alert():
         
         time.sleep(0.2)
     
-    # Send alerts
+    # ============================================
+    # SEND PRICE UPDATE WITH SIGNAL HISTORY
+    # ============================================
+    
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Build price update message with last signals
+    price_msg = f"📊 <b>MARKET UPDATE</b>\n⏱ {now}\n{'='*40}\n\n"
+    price_msg += "\n".join(all_prices)
+    
+    # Add signal count
+    signal_count = len(alert_messages)
+    price_msg += f"\n\n{'='*40}\n"
+    price_msg += f"📈 New Signals: {signal_count}"
+    
+    # Add summary of last signals
+    price_msg += f"\n📊 Active Signals:"
+    active_signals = 0
+    for symbol, config in SYMBOLS.items():
+        last_signal = get_last_signal(symbol)
+        if last_signal and last_signal['signal'] != 'HOLD':
+            active_signals += 1
+            last_time = last_signal['time'].strftime('%H:%M')
+            sig_display = '🟢 BUY' if last_signal['signal'] == 'BUY' else '🔴 SELL'
+            price_msg += f"\n   {config['emoji']} {config['short'] if 'short' in config else config['name']}: {sig_display} @ ${last_signal['price']:,.2f} ({last_time})"
+    
+    if active_signals == 0:
+        price_msg += "\n   ⏸️ No active signals"
+    
+    price_msg += f"\n{'='*40}\n"
+    price_msg += f"⏱ Next update in 15 minutes"
+    
+    # Send price update to Telegram
+    send_telegram(price_msg)
+    print(f"✅ Price update sent for {len(all_prices)} symbols")
+    
+    # ============================================
+    # SEND SIGNAL ALERTS (if any)
+    # ============================================
+    
     if alert_messages:
-        header = f"🎯 <b>SIGNAL ALERTS</b>\n⏱ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'='*40}\n"
+        header = f"🎯 <b>⚠️ NEW SIGNAL ALERT</b>\n⏱ {now}\n{'='*40}\n"
         
         for msg in alert_messages:
             full_msg = header + msg
             send_telegram(full_msg)
             time.sleep(0.5)
         
-        print(f"✅ Sent {len(alert_messages)} alerts")
-    else:
-        print("⏸️ No signals found")
+        print(f"✅ Sent {len(alert_messages)} signal alerts")
 
 # ============================================
 # MAIN LOOP
@@ -335,6 +408,7 @@ def main_loop():
 🎯 Take Profit: {TAKE_PROFIT_PCT}%
 
 ⏱ Updates every 15 minutes
+📊 Shows: Price + Current Signal + Last Signal
 🤖 Bot: Active
     """
     send_telegram(startup_msg)
@@ -344,7 +418,7 @@ def main_loop():
     
     # Then loop every 15 minutes
     while True:
-        time.sleep(900)
+        time.sleep(900)  # 15 minutes
         scan_and_alert()
 
 # ============================================
@@ -354,6 +428,7 @@ def main_loop():
 if __name__ == "__main__":
     print("="*70)
     print("🚀 MULTI-SYMBOL SIGNAL BOT")
+    print("📊 9 Symbols | Price + Signals + History")
     print("="*70)
     
     # Start web server
