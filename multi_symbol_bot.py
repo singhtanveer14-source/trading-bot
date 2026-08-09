@@ -3,7 +3,6 @@ import sys
 import time
 import threading
 import requests
-import json
 from datetime import datetime
 from flask import Flask
 import warnings
@@ -23,6 +22,12 @@ print(f"Chat ID: {TELEGRAM_CHAT_ID}")
 if not TELEGRAM_TOKEN:
     print("❌ No token!")
     sys.exit(1)
+
+# ============================================
+# ALPHA VANTAGE API KEY - YOUR KEY
+# ============================================
+
+ALPHA_VANTAGE_API_KEY = "I9P5WDYIMQHADXV0"
 
 # ============================================
 # FLASK APP
@@ -71,11 +76,38 @@ def send_telegram(message):
         return False
 
 # ============================================
-# RELIABLE DATA SOURCES - 100% WORKING
+# ALPHA VANTAGE API
 # ============================================
 
-def fetch_binance(symbol):
-    """Get crypto price from Binance (RELIABLE)"""
+def get_alpha_vantage(symbol):
+    """Get price from Alpha Vantage"""
+    try:
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'GLOBAL_QUOTE',
+            'symbol': symbol,
+            'apikey': ALPHA_VANTAGE_API_KEY
+        }
+        print(f"    Alpha Vantage: {symbol}")
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                price = data['Global Quote']['05. price']
+                if price:
+                    return float(price)
+        return None
+    except Exception as e:
+        print(f"    Alpha Vantage error: {e}")
+        return None
+
+# ============================================
+# BINANCE API (CRYPTO)
+# ============================================
+
+def get_binance(symbol):
+    """Get crypto price from Binance"""
     try:
         mapping = {
             'BTC': 'BTCUSDT',
@@ -85,15 +117,19 @@ def fetch_binance(symbol):
         if symbol not in mapping:
             return None
         url = f"https://api.binance.com/api/v3/ticker/price?symbol={mapping[symbol]}"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            return float(r.json()['price'])
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            return float(response.json()['price'])
     except:
         pass
     return None
 
-def fetch_coingecko(symbol):
-    """Get crypto from CoinGecko (BACKUP)"""
+# ============================================
+# COINGECKO API (CRYPTO BACKUP)
+# ============================================
+
+def get_coingecko(symbol):
+    """Get crypto from CoinGecko"""
     try:
         mapping = {
             'BTC': 'bitcoin',
@@ -103,152 +139,76 @@ def fetch_coingecko(symbol):
         if symbol not in mapping:
             return None
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={mapping[symbol]}&vs_currencies=usd"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
             return float(data[mapping[symbol]]['usd'])
     except:
         pass
     return None
 
-def fetch_gold():
-    """Get Gold price - MULTIPLE SOURCES"""
-    # Source 1: Gold-API
-    try:
-        r = requests.get("https://api.gold-api.com/price/XAU", timeout=5)
-        if r.status_code == 200:
-            return float(r.json()['price'])
-    except:
-        pass
-    
-    # Source 2: Kitco (free)
-    try:
-        r = requests.get("https://www.kitco.com/kitco-gold-api/current?asset=gold", timeout=5)
-        if r.status_code == 200:
-            return float(r.json().get('ask', 0))
-    except:
-        pass
-    
-    # Source 3: MetalPriceAPI
-    try:
-        r = requests.get("https://api.metalpriceapi.com/v1/latest?api_key=demo&base=USD&currencies=XAU", timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if 'rates' in data and 'XAU' in data['rates']:
-                return float(data['rates']['XAU'])
-    except:
-        pass
-    
-    return None
-
-def fetch_silver():
-    """Get Silver price"""
-    try:
-        r = requests.get("https://api.gold-api.com/price/XAG", timeout=5)
-        if r.status_code == 200:
-            return float(r.json()['price'])
-    except:
-        pass
-    
-    try:
-        r = requests.get("https://www.kitco.com/kitco-gold-api/current?asset=silver", timeout=5)
-        if r.status_code == 200:
-            return float(r.json().get('ask', 0))
-    except:
-        pass
-    
-    return None
-
-def fetch_oil():
-    """Get Crude Oil price"""
-    try:
-        # Using a free Oil price API
-        r = requests.get("https://api.energy.com/oil/price", timeout=5)
-        if r.status_code == 200:
-            return float(r.json().get('price', 0))
-    except:
-        pass
-    
-    # Fallback: Use a fixed approximate price
-    # Crude Oil typically ranges $70-90, we'll use a reasonable estimate
-    return None
-
-def fetch_nifty():
-    """Get NIFTY 50 from NSE India"""
-    try:
-        # NSE India API (free)
-        url = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        r = requests.get(url, headers=headers, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if 'data' in data and len(data['data']) > 0:
-                return float(data['data'][0]['lastPrice'])
-    except:
-        pass
-    
-    # Fallback: Try Google Finance
-    try:
-        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^NSEI"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if 'quoteResponse' in data and 'result' in data['quoteResponse']:
-                result = data['quoteResponse']['result']
-                if result and 'regularMarketPrice' in result[0]:
-                    return float(result[0]['regularMarketPrice'])
-    except:
-        pass
-    
-    return None
-
-def fetch_banknifty():
-    """Get BANKNIFTY"""
-    try:
-        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^NSEBANK"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if 'quoteResponse' in data and 'result' in data['quoteResponse']:
-                result = data['quoteResponse']['result']
-                if result and 'regularMarketPrice' in result[0]:
-                    return float(result[0]['regularMarketPrice'])
-    except:
-        pass
-    return None
-
-def fetch_sensex():
-    """Get SENSEX"""
-    try:
-        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^BSESN"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            data = r.json()
-            if 'quoteResponse' in data and 'result' in data['quoteResponse']:
-                result = data['quoteResponse']['result']
-                if result and 'regularMarketPrice' in result[0]:
-                    return float(result[0]['regularMarketPrice'])
-    except:
-        pass
-    return None
-
 # ============================================
-# SYMBOLS WITH FETCHERS
+# SYMBOLS CONFIG
 # ============================================
+
+# Alpha Vantage symbols mapping
+ALPHA_SYMBOLS = {
+    'BTC': 'BTCUSD',
+    'ETH': 'ETHUSD',
+    'SOL': 'SOLUSD',
+    'GOLD': 'XAUUSD',
+    'SILVER': 'XAGUSD',
+    'OIL': 'CL',
+    'NIFTY': 'NSEI',
+    'BANKNIFTY': 'NSEBANK',
+    'SENSEX': 'BSESN'
+}
 
 SYMBOLS = {
-    'BTC': {'name': 'Bitcoin', 'emoji': '🟢', 'fetcher': lambda: fetch_binance('BTC') or fetch_coingecko('BTC')},
-    'ETH': {'name': 'Ethereum', 'emoji': '🟣', 'fetcher': lambda: fetch_binance('ETH') or fetch_coingecko('ETH')},
-    'SOL': {'name': 'Solana', 'emoji': '🟠', 'fetcher': lambda: fetch_binance('SOL') or fetch_coingecko('SOL')},
-    'GOLD': {'name': 'Gold', 'emoji': '🥇', 'fetcher': fetch_gold},
-    'SILVER': {'name': 'Silver', 'emoji': '🥈', 'fetcher': fetch_silver},
-    'OIL': {'name': 'Crude Oil', 'emoji': '🛢️', 'fetcher': fetch_oil},
-    'NIFTY': {'name': 'NIFTY 50', 'emoji': '🇮🇳', 'fetcher': fetch_nifty},
-    'BANKNIFTY': {'name': 'BANKNIFTY', 'emoji': '🏦', 'fetcher': fetch_banknifty},
-    'SENSEX': {'name': 'SENSEX', 'emoji': '📊', 'fetcher': fetch_sensex}
+    'BTC': {'name': 'Bitcoin', 'emoji': '🟢', 'alpha': 'BTCUSD'},
+    'ETH': {'name': 'Ethereum', 'emoji': '🟣', 'alpha': 'ETHUSD'},
+    'SOL': {'name': 'Solana', 'emoji': '🟠', 'alpha': 'SOLUSD'},
+    'GOLD': {'name': 'Gold', 'emoji': '🥇', 'alpha': 'XAUUSD'},
+    'SILVER': {'name': 'Silver', 'emoji': '🥈', 'alpha': 'XAGUSD'},
+    'OIL': {'name': 'Crude Oil', 'emoji': '🛢️', 'alpha': 'CL'},
+    'NIFTY': {'name': 'NIFTY 50', 'emoji': '🇮🇳', 'alpha': 'NSEI'},
+    'BANKNIFTY': {'name': 'BANKNIFTY', 'emoji': '🏦', 'alpha': 'NSEBANK'},
+    'SENSEX': {'name': 'SENSEX', 'emoji': '📊', 'alpha': 'BSESN'}
 }
+
+# ============================================
+# FETCH PRICE - MULTI SOURCE
+# ============================================
+
+def fetch_price(key, info):
+    """Fetch price using multiple sources"""
+    
+    price = None
+    source_used = None
+    
+    # 1. Try Alpha Vantage first (ALL SYMBOLS)
+    alpha_symbol = info['alpha']
+    print(f"    Alpha Symbol: {alpha_symbol}")
+    price = get_alpha_vantage(alpha_symbol)
+    if price:
+        source_used = 'Alpha Vantage'
+        return price, source_used
+    
+    # 2. For crypto, try Binance
+    if key in ['BTC', 'ETH', 'SOL']:
+        price = get_binance(key)
+        if price:
+            source_used = 'Binance'
+            return price, source_used
+    
+    # 3. For crypto, try CoinGecko
+    if key in ['BTC', 'ETH', 'SOL']:
+        price = get_coingecko(key)
+        if price:
+            source_used = 'CoinGecko'
+            return price, source_used
+    
+    return None, None
 
 # ============================================
 # SCAN AND SEND
@@ -268,16 +228,16 @@ def scan_and_send():
         try:
             print(f"  Fetching {info['name']}...")
             
-            price = info['fetcher']()
+            price, source = fetch_price(key, info)
             
             if price:
                 success_count += 1
                 # Format differently for indices
                 if key in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
-                    prices.append(f"{info['emoji']} {info['name']}: {price:,.2f}")
+                    prices.append(f"{info['emoji']} {info['name']}: {price:,.2f} [{source}]")
                 else:
-                    prices.append(f"{info['emoji']} {info['name']}: ${price:,.2f}")
-                print(f"    ✅ {price:,.2f}")
+                    prices.append(f"{info['emoji']} {info['name']}: ${price:,.2f} [{source}]")
+                print(f"    ✅ {price:,.2f} ({source})")
             else:
                 errors.append(f"❌ {info['name']}: No data")
                 print(f"    ❌ No data")
@@ -286,7 +246,7 @@ def scan_and_send():
             errors.append(f"❌ {info['name']}: Error")
             print(f"    ❌ {e}")
         
-        time.sleep(0.3)
+        time.sleep(0.5)
     
     # Build message
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -330,9 +290,9 @@ def main_loop():
 📊 SENSEX
 
 📡 Data Sources:
-• Binance (Crypto)
-• Gold-API (Gold/Silver)
-• NSE India (Indices)
+   • Alpha Vantage (ALL symbols)
+   • Binance (Crypto backup)
+   • CoinGecko (Crypto backup)
 
 ⏱ Updates every 15 minutes
     """)
