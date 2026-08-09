@@ -1,1 +1,1 @@
-web: gunicorn alltradebot:app
+web: gunicorn multi_symbol_bot:app
