@@ -82,53 +82,29 @@ def send_telegram(message):
         return False
 
 # ============================================
-# PRICE CACHE - STORES LAST TRADED PRICE
+# PRICE CACHE
 # ============================================
 
 price_cache = {}
 cache_time = {}
 
 def update_cache(symbol, price):
-    """Update cached price"""
     price_cache[symbol] = price
     cache_time[symbol] = datetime.now()
 
 def get_cached_price(symbol):
-    """Get cached price if available"""
-    if symbol in price_cache:
-        return price_cache[symbol]
-    return None
+    return price_cache.get(symbol)
 
-def get_cache_time(symbol):
-    """Get when price was cached"""
+def get_cache_time_str(symbol):
     if symbol in cache_time:
-        return cache_time[symbol]
+        return cache_time[symbol].strftime('%H:%M')
     return None
 
 # ============================================
-# PART 1: ALPHA VANTAGE - WORKING SYMBOLS
+# CRYPTO - BINANCE + COINGECKO
 # ============================================
-
-def get_alpha_vantage(symbol):
-    """Get price from Alpha Vantage"""
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            'function': 'GLOBAL_QUOTE',
-            'symbol': symbol,
-            'apikey': ALPHA_VANTAGE_API_KEY
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if 'Global Quote' in data and '05. price' in data['Global Quote']:
-                return float(data['Global Quote']['05. price'])
-        return None
-    except:
-        return None
 
 def get_binance(symbol):
-    """Get crypto from Binance"""
     try:
         mapping = {
             'BTC': 'BTCUSDT',
@@ -146,7 +122,6 @@ def get_binance(symbol):
     return None
 
 def get_coingecko(symbol):
-    """Get crypto from CoinGecko"""
     try:
         mapping = {
             'BTC': 'bitcoin',
@@ -164,96 +139,205 @@ def get_coingecko(symbol):
         pass
     return None
 
+# ============================================
+# GOLD - MULTIPLE SOURCES
+# ============================================
+
 def get_gold_price():
-    """Gold from Alpha Vantage"""
+    """Gold from multiple sources"""
+    
+    # 1. Alpha Vantage
     try:
-        price = get_alpha_vantage('XAUUSD')
-        if price:
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'GLOBAL_QUOTE',
+            'symbol': 'XAUUSD',
+            'apikey': ALPHA_VANTAGE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                price = float(data['Global Quote']['05. price'])
+                update_cache('GOLD', price)
+                return price
+    except:
+        pass
+    
+    # 2. Gold-API
+    try:
+        url = "https://api.gold-api.com/price/XAU"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'price' in data:
+                price = float(data['price'])
+                update_cache('GOLD', price)
+                return price
+    except:
+        pass
+    
+    # 3. Yahoo Finance (backup)
+    try:
+        ticker = yf.Ticker('GC=F')
+        data = ticker.history(period="1d", interval="1m")
+        if not data.empty:
+            price = float(data['Close'].iloc[-1])
             update_cache('GOLD', price)
             return price
-        return get_cached_price('GOLD')
     except:
-        return get_cached_price('GOLD')
+        pass
+    
+    return get_cached_price('GOLD')
+
+# ============================================
+# SILVER - MULTIPLE SOURCES
+# ============================================
 
 def get_silver_price():
-    """Silver from Alpha Vantage"""
+    """Silver from multiple sources"""
+    
+    # 1. Alpha Vantage
     try:
-        price = get_alpha_vantage('XAGUSD')
-        if price:
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'GLOBAL_QUOTE',
+            'symbol': 'XAGUSD',
+            'apikey': ALPHA_VANTAGE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                price = float(data['Global Quote']['05. price'])
+                update_cache('SILVER', price)
+                return price
+    except:
+        pass
+    
+    # 2. Gold-API
+    try:
+        url = "https://api.gold-api.com/price/XAG"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'price' in data:
+                price = float(data['price'])
+                update_cache('SILVER', price)
+                return price
+    except:
+        pass
+    
+    # 3. Yahoo Finance (backup)
+    try:
+        ticker = yf.Ticker('SI=F')
+        data = ticker.history(period="1d", interval="1m")
+        if not data.empty:
+            price = float(data['Close'].iloc[-1])
             update_cache('SILVER', price)
             return price
-        return get_cached_price('SILVER')
     except:
-        return get_cached_price('SILVER')
+        pass
+    
+    return get_cached_price('SILVER')
 
 # ============================================
-# PART 2: YAHOO FINANCE - WEEKDAY SYMBOLS WITH CACHE
+# CRUDE OIL - MULTIPLE SOURCES
 # ============================================
 
-def is_weekday():
-    """Check if today is a weekday (Monday-Friday)"""
-    today = datetime.now().weekday()
-    return today < 5
+def get_oil_price():
+    """Crude Oil from multiple sources"""
+    
+    # 1. Alpha Vantage
+    try:
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'GLOBAL_QUOTE',
+            'symbol': 'CL',
+            'apikey': ALPHA_VANTAGE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                price = float(data['Global Quote']['05. price'])
+                update_cache('OIL', price)
+                return price
+    except:
+        pass
+    
+    # 2. Yahoo Finance
+    try:
+        ticker = yf.Ticker('CL=F')
+        data = ticker.history(period="1d", interval="1m")
+        if not data.empty:
+            price = float(data['Close'].iloc[-1])
+            update_cache('OIL', price)
+            return price
+    except:
+        pass
+    
+    # 3. Alpha Vantage with WTI
+    try:
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'GLOBAL_QUOTE',
+            'symbol': 'WTI',
+            'apikey': ALPHA_VANTAGE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'Global Quote' in data and '05. price' in data['Global Quote']:
+                price = float(data['Global Quote']['05. price'])
+                update_cache('OIL', price)
+                return price
+    except:
+        pass
+    
+    return get_cached_price('OIL')
+
+# ============================================
+# INDIAN INDICES - YAHOO FINANCE
+# ============================================
 
 def get_yfinance_price(symbol, cache_key):
-    """Get price from Yahoo Finance with caching"""
+    """Get price from Yahoo Finance"""
     try:
         ticker = yf.Ticker(symbol)
         data = ticker.history(period="1d", interval="1m")
         if not data.empty:
-            price = data['Close'].iloc[-1]
-            if price and price > 0:
-                price = float(price)
-                update_cache(cache_key, price)
-                return price
-        
-        # Try longer period
+            price = float(data['Close'].iloc[-1])
+            update_cache(cache_key, price)
+            return price
         data = ticker.history(period="5d", interval="1h")
         if not data.empty:
-            price = data['Close'].iloc[-1]
-            if price and price > 0:
-                price = float(price)
-                update_cache(cache_key, price)
-                return price
-        
-        # Return cached price if available
-        cached = get_cached_price(cache_key)
-        if cached:
-            return cached
-        return None
-    except Exception as e:
-        print(f"    Yahoo error: {e}")
+            price = float(data['Close'].iloc[-1])
+            update_cache(cache_key, price)
+            return price
+        return get_cached_price(cache_key)
+    except:
         return get_cached_price(cache_key)
 
-def get_oil_price():
-    """Crude Oil from Yahoo with cache"""
-    return get_yfinance_price('CL=F', 'OIL')
-
 def get_nifty_price():
-    """NIFTY 50 from Yahoo with cache"""
     return get_yfinance_price('^NSEI', 'NIFTY')
 
 def get_banknifty_price():
-    """BANKNIFTY from Yahoo with cache"""
     return get_yfinance_price('^NSEBANK', 'BANKNIFTY')
 
 def get_sensex_price():
-    """SENSEX from Yahoo with cache"""
     return get_yfinance_price('^BSESN', 'SENSEX')
 
 # ============================================
-# SYMBOLS - HYBRID APPROACH
+# SYMBOLS
 # ============================================
 
 SYMBOLS = [
-    # PART 1: Alpha Vantage (Working 24/7)
-    {'key': 'BTC', 'name': 'Bitcoin', 'emoji': '🟢', 'fetcher': lambda: get_binance('BTC') or get_coingecko('BTC') or get_alpha_vantage('BTCUSD')},
-    {'key': 'ETH', 'name': 'Ethereum', 'emoji': '🟣', 'fetcher': lambda: get_binance('ETH') or get_coingecko('ETH') or get_alpha_vantage('ETHUSD')},
-    {'key': 'SOL', 'name': 'Solana', 'emoji': '🟠', 'fetcher': lambda: get_binance('SOL') or get_coingecko('SOL') or get_alpha_vantage('SOLUSD')},
+    {'key': 'BTC', 'name': 'Bitcoin', 'emoji': '🟢', 'fetcher': lambda: get_binance('BTC') or get_coingecko('BTC')},
+    {'key': 'ETH', 'name': 'Ethereum', 'emoji': '🟣', 'fetcher': lambda: get_binance('ETH') or get_coingecko('ETH')},
+    {'key': 'SOL', 'name': 'Solana', 'emoji': '🟠', 'fetcher': lambda: get_binance('SOL') or get_coingecko('SOL')},
     {'key': 'GOLD', 'name': 'Gold', 'emoji': '🥇', 'fetcher': get_gold_price},
     {'key': 'SILVER', 'name': 'Silver', 'emoji': '🥈', 'fetcher': get_silver_price},
-    
-    # PART 2: Yahoo Finance (Weekdays Only with Cache)
     {'key': 'OIL', 'name': 'Crude Oil', 'emoji': '🛢️', 'fetcher': get_oil_price},
     {'key': 'NIFTY', 'name': 'NIFTY 50', 'emoji': '🇮🇳', 'fetcher': get_nifty_price},
     {'key': 'BANKNIFTY', 'name': 'BANKNIFTY', 'emoji': '🏦', 'fetcher': get_banknifty_price},
@@ -268,45 +352,35 @@ def scan_and_send():
     print(f"\n📊 Scanning at {datetime.now().strftime('%H:%M:%S')}")
     
     today = datetime.now().strftime('%A')
-    weekday_status = "🟢 Markets Open" if is_weekday() else "🔴 Markets Closed (Sunday)"
-    print(f"📅 Today: {today} - {weekday_status}")
+    is_weekend = datetime.now().weekday() >= 5
+    weekday_status = "🟢 Markets Open" if not is_weekend else "🔴 Markets Closed (Weekend)"
     
     prices = []
     failed = []
-    cached_items = []
+    cached_list = []
     success_count = 0
     
-    send_telegram(f"🔄 Market Data | {today} | {weekday_status}")
+    send_telegram(f"🔄 Market Data | {today}")
     
     for info in SYMBOLS:
         try:
             print(f"  Fetching {info['name']}...")
             price = info['fetcher']()
             
-            # Check if this is cached data
-            is_cached = False
-            cache_time_val = get_cache_time(info['key'])
-            if cache_time_val:
-                age = (datetime.now() - cache_time_val).total_seconds() / 3600
-                if age > 1:  # If older than 1 hour
-                    is_cached = True
-            
             if price and price > 0:
                 success_count += 1
                 
-                # Format the display
+                # Format price
                 if info['key'] in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
                     price_str = f"{info['emoji']} {info['name']}: {price:,.2f}"
                 else:
                     price_str = f"{info['emoji']} {info['name']}: ${price:,.2f}"
                 
-                # Add cached indicator for weekday symbols on weekend
-                if info['key'] in ['OIL', 'NIFTY', 'BANKNIFTY', 'SENSEX'] and not is_weekday():
-                    cache_time_val = get_cache_time(info['key'])
-                    if cache_time_val:
-                        time_str = cache_time_val.strftime('%H:%M')
-                        price_str += f" 📊 (Last: {time_str})"
-                        cached_items.append(info['name'])
+                # Check if cached
+                cache_time_str = get_cache_time_str(info['key'])
+                if cache_time_str:
+                    price_str += f" 📊 (Last: {cache_time_str})"
+                    cached_list.append(info['name'])
                 
                 prices.append(price_str)
                 print(f"    ✅ {price:,.2f}")
@@ -324,7 +398,7 @@ def scan_and_send():
     
     msg = f"📊 <b>MARKET UPDATE</b>\n"
     msg += f"⏱ {now}\n"
-    msg += f"📅 {today} | {weekday_status}\n"
+    msg += f"📅 {today}\n"
     msg += "="*40 + "\n\n"
     
     if prices:
@@ -332,9 +406,6 @@ def scan_and_send():
         msg += f"\n\n✅ Updated: {success_count}/{len(SYMBOLS)} symbols"
     else:
         msg += "⚠️ No prices available"
-    
-    if cached_items:
-        msg += f"\n\n📊 Showing Last Traded Price: {', '.join(cached_items)}"
     
     if failed:
         msg += f"\n\n❌ Failed: {', '.join(failed)}"
@@ -351,17 +422,18 @@ def main_loop():
     print("\n🔄 Starting main loop...")
     
     today = datetime.now().strftime('%A')
-    weekday_status = "🟢 Markets Open" if is_weekday() else "🔴 Markets Closed (Sunday)"
+    is_weekend = datetime.now().weekday() >= 5
     
     send_telegram(f"""
 🚀 <b>HYBRID TRADING BOT</b>
 
 📊 9 Symbols
-📅 {today} | {weekday_status}
+📅 {today} {'🔴' if is_weekend else '🟢'}
 
 📡 Data Sources:
-   • Alpha Vantage: BTC, ETH, SOL, Gold, Silver ✅
-   • Yahoo Finance: NIFTY, BANKNIFTY, SENSEX, Crude Oil {'✅' if is_weekday() else '📊 (Last Traded Price)'}
+   • Binance: BTC, ETH, SOL
+   • Alpha Vantage: Gold, Silver, Oil
+   • Yahoo Finance: NIFTY, BANKNIFTY, SENSEX
 
 ⏱ Updates every 15 minutes
     """)
