@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore')
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003971188413")
 
-print("🚀 Starting Professional Bot...")
+print("🚀 Starting Professional Trading Bot...")
 print(f"Token: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
 
 if not TELEGRAM_TOKEN:
@@ -52,7 +52,7 @@ def force_scan():
             print(f"❌ Scan error: {e}")
             send_telegram(f"⚠️ Scan error: {str(e)[:100]}")
     threading.Thread(target=background_scan).start()
-    return "✅ Scan started! Check Telegram."
+    return "✅ Scan started! Check Telegram in 2-3 minutes."
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -81,11 +81,11 @@ def send_telegram(message):
         return False
 
 # ============================================
-# DATA SOURCES - RELIABLE & FREE
+# ALPHA VANTAGE API
 # ============================================
 
 def get_alpha_vantage(symbol):
-    """Alpha Vantage - Most reliable for all assets"""
+    """Get price from Alpha Vantage"""
     try:
         url = "https://www.alphavantage.co/query"
         params = {
@@ -102,8 +102,30 @@ def get_alpha_vantage(symbol):
     except:
         return None
 
+def get_alpha_vantage_currency(symbol):
+    """Get FX prices from Alpha Vantage"""
+    try:
+        url = "https://www.alphavantage.co/query"
+        params = {
+            'function': 'CURRENCY_EXCHANGE_RATE',
+            'from_currency': symbol,
+            'to_currency': 'USD',
+            'apikey': ALPHA_VANTAGE_API_KEY
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if 'Realtime Currency Exchange Rate' in data:
+                return float(data['Realtime Currency Exchange Rate']['5. Exchange Rate'])
+        return None
+    except:
+        return None
+
+# ============================================
+# CRYPTO SOURCES
+# ============================================
+
 def get_binance(symbol):
-    """Binance - Best for crypto"""
     try:
         mapping = {
             'BTC': 'BTCUSDT',
@@ -121,7 +143,6 @@ def get_binance(symbol):
     return None
 
 def get_coingecko(symbol):
-    """CoinGecko - Crypto backup"""
     try:
         mapping = {
             'BTC': 'bitcoin',
@@ -139,8 +160,11 @@ def get_coingecko(symbol):
         pass
     return None
 
+# ============================================
+# GOLD & SILVER
+# ============================================
+
 def get_gold_price():
-    """Gold - Multiple sources"""
     # Try Gold-API
     try:
         url = "https://api.gold-api.com/price/XAU"
@@ -154,7 +178,6 @@ def get_gold_price():
     return get_alpha_vantage('XAUUSD')
 
 def get_silver_price():
-    """Silver - Multiple sources"""
     try:
         url = "https://api.gold-api.com/price/XAG"
         response = requests.get(url, timeout=5)
@@ -165,21 +188,144 @@ def get_silver_price():
         pass
     return get_alpha_vantage('XAGUSD')
 
+# ============================================
+# CRUDE OIL - MULTIPLE SOURCES
+# ============================================
+
 def get_oil_price():
-    """Oil from Alpha Vantage"""
-    return get_alpha_vantage('CL')
+    """Get Crude Oil price from multiple sources"""
+    
+    # 1. Try Alpha Vantage with correct symbol
+    oil = get_alpha_vantage('CL')
+    if oil:
+        return oil
+    
+    # 2. Try Alpha Vantage with WTI symbol
+    oil = get_alpha_vantage('WTI')
+    if oil:
+        return oil
+    
+    # 3. Try Alpha Vantage with Brent symbol
+    oil = get_alpha_vantage('BZ')
+    if oil:
+        return oil
+    
+    # 4. Try using ETF proxy
+    oil = get_alpha_vantage('USO')
+    if oil:
+        return oil
+    
+    # 5. Try free Oil API
+    try:
+        url = "https://api.energy.com/oil/price"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'price' in data:
+                return float(data['price'])
+    except:
+        pass
+    
+    return None
+
+# ============================================
+# NIFTY 50 - MULTIPLE SOURCES
+# ============================================
 
 def get_nifty_price():
-    """NIFTY from Alpha Vantage"""
-    return get_alpha_vantage('NSEI')
+    """Get NIFTY 50 price"""
+    
+    # 1. Try Alpha Vantage with correct symbol
+    nifty = get_alpha_vantage('^NSEI')
+    if nifty:
+        return nifty
+    
+    # 2. Try without ^
+    nifty = get_alpha_vantage('NSEI')
+    if nifty:
+        return nifty
+    
+    # 3. Try with NSE: prefix
+    nifty = get_alpha_vantage('NSE:NIFTY')
+    if nifty:
+        return nifty
+    
+    # 4. Try Yahoo Finance API (free)
+    try:
+        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^NSEI"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'quoteResponse' in data and 'result' in data['quoteResponse']:
+                result = data['quoteResponse']['result']
+                if result and 'regularMarketPrice' in result[0]:
+                    return float(result[0]['regularMarketPrice'])
+    except:
+        pass
+    
+    return None
+
+# ============================================
+# BANKNIFTY
+# ============================================
 
 def get_banknifty_price():
-    """BANKNIFTY from Alpha Vantage"""
-    return get_alpha_vantage('NSEBANK')
+    """Get BANKNIFTY price"""
+    
+    # 1. Try Alpha Vantage
+    banknifty = get_alpha_vantage('^NSEBANK')
+    if banknifty:
+        return banknifty
+    
+    banknifty = get_alpha_vantage('NSEBANK')
+    if banknifty:
+        return banknifty
+    
+    # 2. Try Yahoo Finance
+    try:
+        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^NSEBANK"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'quoteResponse' in data and 'result' in data['quoteResponse']:
+                result = data['quoteResponse']['result']
+                if result and 'regularMarketPrice' in result[0]:
+                    return float(result[0]['regularMarketPrice'])
+    except:
+        pass
+    
+    return None
+
+# ============================================
+# SENSEX
+# ============================================
 
 def get_sensex_price():
-    """SENSEX from Alpha Vantage"""
-    return get_alpha_vantage('BSESN')
+    """Get SENSEX price"""
+    
+    # 1. Try Alpha Vantage
+    sensex = get_alpha_vantage('^BSESN')
+    if sensex:
+        return sensex
+    
+    sensex = get_alpha_vantage('BSESN')
+    if sensex:
+        return sensex
+    
+    # 2. Try Yahoo Finance
+    try:
+        url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^BSESN"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'quoteResponse' in data and 'result' in data['quoteResponse']:
+                result = data['quoteResponse']['result']
+                if result and 'regularMarketPrice' in result[0]:
+                    return float(result[0]['regularMarketPrice'])
+    except:
+        pass
+    
+    return None
 
 # ============================================
 # SYMBOLS
@@ -231,7 +377,6 @@ def scan_and_send():
         
         time.sleep(12)
     
-    # Build message
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     msg = "📊 <b>MARKET UPDATE</b>\n"
@@ -262,7 +407,7 @@ def main_loop():
 🚀 <b>PROFESSIONAL TRADING BOT</b>
 
 📊 9 Symbols | Real Prices Only
-📡 Alpha Vantage + Binance + CoinGecko
+📡 Multiple Data Sources
 ⏱ Updates every 15 minutes
     """)
     
