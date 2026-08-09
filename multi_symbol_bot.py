@@ -3,7 +3,7 @@ import sys
 import time
 import threading
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask
 import warnings
 warnings.filterwarnings('ignore')
@@ -17,27 +17,26 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003971188413")
 
 print("🚀 Starting Bot...")
 print(f"Token: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
-print(f"Chat ID: {TELEGRAM_CHAT_ID}")
 
 if not TELEGRAM_TOKEN:
     print("❌ No token!")
     sys.exit(1)
 
 # ============================================
-# ALPHA VANTAGE API KEY
+# ALPHA VANTAGE API
 # ============================================
 
 ALPHA_VANTAGE_API_KEY = "I9P5WDYIMQHADXV0"
 
 # ============================================
-# FLASK APP
+# FLASK APP - SIMPLIFIED
 # ============================================
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "🚀 Trading Bot is Running!"
+    return "✅ Bot is Running!"
 
 @app.route('/health')
 def health():
@@ -45,9 +44,21 @@ def health():
 
 @app.route('/scan')
 def force_scan():
+    """Force scan - runs in background to avoid timeout"""
     print("🔍 Force scan triggered!")
-    scan_and_send()
-    return "✅ Scan completed! Check Telegram."
+    
+    # Run scan in background thread
+    def background_scan():
+        try:
+            scan_and_send()
+        except Exception as e:
+            print(f"❌ Scan error: {e}")
+            send_telegram(f"⚠️ Scan error: {str(e)[:100]}")
+    
+    thread = threading.Thread(target=background_scan)
+    thread.start()
+    
+    return "✅ Scan started! Check Telegram in 2-3 minutes."
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -76,76 +87,29 @@ def send_telegram(message):
         return False
 
 # ============================================
-# PRICE CACHE (To handle rate limits)
-# ============================================
-
-price_cache = {}
-cache_timeout = 300  # 5 minutes
-
-def get_cached_price(symbol):
-    """Get cached price if fresh"""
-    if symbol in price_cache:
-        data = price_cache[symbol]
-        if datetime.now() - data['time'] < timedelta(seconds=cache_timeout):
-            return data['price'], data['source']
-    return None, None
-
-def set_cached_price(symbol, price, source):
-    """Cache price"""
-    price_cache[symbol] = {
-        'price': price,
-        'source': source,
-        'time': datetime.now()
-    }
-
-# ============================================
-# ALPHA VANTAGE API (With rate limit handling)
+# WORKING DATA SOURCES
 # ============================================
 
 def get_alpha_vantage(symbol):
-    """Get price from Alpha Vantage with rate limit handling"""
+    """Get price from Alpha Vantage"""
     try:
-        # Check cache first
-        cached_price, cached_source = get_cached_price(symbol)
-        if cached_price:
-            print(f"    Using cached: {symbol} = ${cached_price}")
-            return cached_price, cached_source
-        
         url = "https://www.alphavantage.co/query"
         params = {
             'function': 'GLOBAL_QUOTE',
             'symbol': symbol,
             'apikey': ALPHA_VANTAGE_API_KEY
         }
-        print(f"    Alpha Vantage API: {symbol}")
         response = requests.get(url, params=params, timeout=10)
-        
         if response.status_code == 200:
             data = response.json()
-            
-            # Check for rate limit message
-            if 'Note' in data:
-                print(f"    ⚠️ Rate limit: {data['Note'][:50]}")
-                return None, None
-            
             if 'Global Quote' in data and '05. price' in data['Global Quote']:
-                price = data['Global Quote']['05. price']
-                if price:
-                    price_val = float(price)
-                    set_cached_price(symbol, price_val, 'Alpha Vantage')
-                    return price_val, 'Alpha Vantage'
-        
-        return None, None
-    except Exception as e:
-        print(f"    Alpha Vantage error: {e}")
-        return None, None
-
-# ============================================
-# BINANCE API
-# ============================================
+                return float(data['Global Quote']['05. price'])
+        return None
+    except:
+        return None
 
 def get_binance(symbol):
-    """Get crypto price from Binance"""
+    """Get crypto from Binance"""
     try:
         mapping = {
             'BTC': 'BTCUSDT',
@@ -153,26 +117,14 @@ def get_binance(symbol):
             'SOL': 'SOLUSDT'
         }
         if symbol not in mapping:
-            return None, None
-        
-        # Check cache
-        cached_price, cached_source = get_cached_price(symbol)
-        if cached_price:
-            return cached_price, cached_source
-        
+            return None
         url = f"https://api.binance.com/api/v3/ticker/price?symbol={mapping[symbol]}"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
-            price = float(response.json()['price'])
-            set_cached_price(symbol, price, 'Binance')
-            return price, 'Binance'
+            return float(response.json()['price'])
     except:
         pass
-    return None, None
-
-# ============================================
-# COINGECKO API
-# ============================================
+    return None
 
 def get_coingecko(symbol):
     """Get crypto from CoinGecko"""
@@ -183,25 +135,18 @@ def get_coingecko(symbol):
             'SOL': 'solana'
         }
         if symbol not in mapping:
-            return None, None
-        
-        cached_price, cached_source = get_cached_price(symbol)
-        if cached_price:
-            return cached_price, cached_source
-        
+            return None
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={mapping[symbol]}&vs_currencies=usd"
         response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            price = float(data[mapping[symbol]]['usd'])
-            set_cached_price(symbol, price, 'CoinGecko')
-            return price, 'CoinGecko'
+            return float(data[mapping[symbol]]['usd'])
     except:
         pass
-    return None, None
+    return None
 
 # ============================================
-# FALLBACK PRICES (Approximate)
+# FALLBACK PRICES
 # ============================================
 
 FALLBACK_PRICES = {
@@ -217,54 +162,50 @@ FALLBACK_PRICES = {
 }
 
 # ============================================
-# SYMBOLS CONFIG
+# SYMBOLS
 # ============================================
 
-SYMBOLS = {
-    'BTC': {'name': 'Bitcoin', 'emoji': '🟢', 'alpha': 'BTCUSD'},
-    'ETH': {'name': 'Ethereum', 'emoji': '🟣', 'alpha': 'ETHUSD'},
-    'SOL': {'name': 'Solana', 'emoji': '🟠', 'alpha': 'SOLUSD'},
-    'GOLD': {'name': 'Gold', 'emoji': '🥇', 'alpha': 'XAUUSD'},
-    'SILVER': {'name': 'Silver', 'emoji': '🥈', 'alpha': 'XAGUSD'},
-    'OIL': {'name': 'Crude Oil', 'emoji': '🛢️', 'alpha': 'CL'},
-    'NIFTY': {'name': 'NIFTY 50', 'emoji': '🇮🇳', 'alpha': 'NSEI'},
-    'BANKNIFTY': {'name': 'BANKNIFTY', 'emoji': '🏦', 'alpha': 'NSEBANK'},
-    'SENSEX': {'name': 'SENSEX', 'emoji': '📊', 'alpha': 'BSESN'}
-}
+SYMBOLS = [
+    {'key': 'BTC', 'name': 'Bitcoin', 'emoji': '🟢', 'alpha': 'BTCUSD'},
+    {'key': 'ETH', 'name': 'Ethereum', 'emoji': '🟣', 'alpha': 'ETHUSD'},
+    {'key': 'SOL', 'name': 'Solana', 'emoji': '🟠', 'alpha': 'SOLUSD'},
+    {'key': 'GOLD', 'name': 'Gold', 'emoji': '🥇', 'alpha': 'XAUUSD'},
+    {'key': 'SILVER', 'name': 'Silver', 'emoji': '🥈', 'alpha': 'XAGUSD'},
+    {'key': 'OIL', 'name': 'Crude Oil', 'emoji': '🛢️', 'alpha': 'CL'},
+    {'key': 'NIFTY', 'name': 'NIFTY 50', 'emoji': '🇮🇳', 'alpha': 'NSEI'},
+    {'key': 'BANKNIFTY', 'name': 'BANKNIFTY', 'emoji': '🏦', 'alpha': 'NSEBANK'},
+    {'key': 'SENSEX', 'name': 'SENSEX', 'emoji': '📊', 'alpha': 'BSESN'}
+]
 
 # ============================================
-# FETCH PRICE - WITH RATE LIMIT HANDLING
+# FETCH PRICE - SIMPLE
 # ============================================
 
-def fetch_price(key, info):
-    """Fetch price with rate limit handling and fallbacks"""
+def fetch_price(symbol_info):
+    """Fetch price - tries multiple sources"""
     
-    price = None
-    source_used = None
+    key = symbol_info['key']
     
-    # Try Alpha Vantage first
-    price, source = get_alpha_vantage(info['alpha'])
+    # 1. Try Alpha Vantage
+    price = get_alpha_vantage(symbol_info['alpha'])
     if price:
-        return price, source
+        return price, 'Alpha Vantage'
     
-    # For crypto, try Binance
+    # 2. For crypto, try Binance
     if key in ['BTC', 'ETH', 'SOL']:
-        price, source = get_binance(key)
+        price = get_binance(key)
         if price:
-            return price, source
+            return price, 'Binance'
     
-    # For crypto, try CoinGecko
+    # 3. For crypto, try CoinGecko
     if key in ['BTC', 'ETH', 'SOL']:
-        price, source = get_coingecko(key)
+        price = get_coingecko(key)
         if price:
-            return price, source
+            return price, 'CoinGecko'
     
-    # Use fallback price
+    # 4. Use fallback
     if key in FALLBACK_PRICES:
-        price = FALLBACK_PRICES[key]
-        source_used = '📊 Estimate'
-        set_cached_price(key, price, source_used)
-        return price, source_used
+        return FALLBACK_PRICES[key], '📊 Estimate'
     
     return None, None
 
@@ -276,40 +217,35 @@ def scan_and_send():
     print(f"\n📊 Scanning at {datetime.now().strftime('%H:%M:%S')}")
     
     prices = []
-    errors = []
     success_count = 0
     fallback_count = 0
     
-    # Send heartbeat
+    # Send start message
     send_telegram(f"🔄 Scanning markets... ({datetime.now().strftime('%H:%M')})")
     
-    for key, info in SYMBOLS.items():
+    for info in SYMBOLS:
         try:
             print(f"  Fetching {info['name']}...")
             
-            price, source = fetch_price(key, info)
+            price, source = fetch_price(info)
             
             if price:
                 success_count += 1
                 if source == '📊 Estimate':
                     fallback_count += 1
                 
-                # Format differently for indices
-                if key in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
+                if info['key'] in ['NIFTY', 'BANKNIFTY', 'SENSEX']:
                     prices.append(f"{info['emoji']} {info['name']}: {price:,.2f} [{source}]")
                 else:
                     prices.append(f"{info['emoji']} {info['name']}: ${price:,.2f} [{source}]")
                 print(f"    ✅ {price:,.2f} ({source})")
             else:
-                errors.append(f"❌ {info['name']}: No data")
                 print(f"    ❌ No data")
                 
         except Exception as e:
-            errors.append(f"❌ {info['name']}: Error")
-            print(f"    ❌ {e}")
+            print(f"    ❌ Error: {e}")
         
-        # Rate limit: 12 seconds between requests to stay under 5/min
-        print(f"    ⏳ Waiting 12 seconds (Alpha Vantage rate limit)...")
+        # Wait 12 seconds between requests (Alpha Vantage rate limit)
         time.sleep(12)
     
     # Build message
@@ -327,9 +263,6 @@ def scan_and_send():
     else:
         msg += "⚠️ No prices fetched"
     
-    if errors and len(errors) <= 3:
-        msg += "\n\n⚠️ Errors:\n" + "\n".join(errors)
-    
     msg += "\n\n⏱ Next update in 15 minutes"
     
     send_telegram(msg)
@@ -344,23 +277,8 @@ def main_loop():
     send_telegram("""
 🚀 <b>TRADING BOT STARTED</b>
 
-📊 Monitoring 9 symbols:
-🟢 Bitcoin
-🟣 Ethereum
-🟠 Solana
-🥇 Gold
-🥈 Silver
-🛢️ Crude Oil
-🇮🇳 NIFTY 50
-🏦 BANKNIFTY
-📊 SENSEX
-
-📡 Data Sources:
-   • Alpha Vantage (All)
-   • Binance (Crypto)
-   • CoinGecko (Crypto)
-   • Estimated Fallback
-
+📊 Monitoring 9 symbols
+📡 Data: Alpha Vantage + Binance + CoinGecko
 ⏱ Updates every 15 minutes
     """)
     
@@ -383,8 +301,10 @@ if __name__ == "__main__":
     print("🚀 TRADING BOT")
     print("="*50)
     
+    # Start web server
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     print("🌐 Web server started")
     
+    # Start main loop
     main_loop()
