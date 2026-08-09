@@ -1,6 +1,5 @@
 # ============================================
-# MULTI-SYMBOL SIGNAL BOT WITH TELEGRAM
-# BTCUSD, ETHUSD, SOLUSD, XAUUSD, XAGUSD, USOIL, NIFTY, BANKNIFTY, SENSEX
+# MULTI-SYMBOL SIGNAL BOT - WORKING TELEGRAM
 # ============================================
 
 import os
@@ -22,16 +21,15 @@ warnings.filterwarnings('ignore')
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003971188413")
 
+print(f"🔑 TELEGRAM_TOKEN: {'✅ Found' if TELEGRAM_TOKEN else '❌ Missing'}")
+print(f"📱 TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
+
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN not found!")
-    print("Please set TELEGRAM_TOKEN in Render Environment")
     sys.exit(1)
 
-print(f"✅ TELEGRAM_TOKEN found: {TELEGRAM_TOKEN[:10]}...")
-print(f"✅ TELEGRAM_CHAT_ID: {TELEGRAM_CHAT_ID}")
-
 # ============================================
-# FLASK APP FOR RENDER HEALTH CHECKS
+# FLASK APP
 # ============================================
 
 app = Flask(__name__)
@@ -43,6 +41,16 @@ def home():
 @app.route('/health')
 def health():
     return "OK", 200
+
+@app.route('/test-telegram')
+def test_telegram():
+    """Test Telegram connection"""
+    print("🧪 Test endpoint called!")
+    result = send_telegram("🧪 Test message from multi-symbol bot! Bot is active!")
+    if result:
+        return "✅ Test message sent to Telegram! Check your group!"
+    else:
+        return "❌ Failed to send test message. Check logs.", 500
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -70,36 +78,22 @@ STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.75
 
 # ============================================
-# TELEGRAM FUNCTIONS
+# TELEGRAM FUNCTIONS - FIXED
 # ============================================
 
 def test_telegram_connection():
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe"
+        print(f"🔍 Testing Telegram connection...")
         response = requests.get(url, timeout=10)
+        print(f"📡 Response status: {response.status_code}")
+        
         if response.status_code == 200:
             data = response.json()
             if data.get('ok'):
                 print(f"✅ Bot connected: @{data['result']['username']}")
                 return True
-        print(f"❌ Bot connection failed")
-        return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
-
-def test_group_chat_id():
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
-            'chat_id': TELEGRAM_CHAT_ID,
-            'text': '🔄 Multi-Symbol Signal Bot is starting up...'
-        }
-        response = requests.post(url, data=payload, timeout=10)
-        if response.status_code == 200:
-            print("✅ Test message sent to group!")
-            return True
-        print(f"❌ Failed: {response.text}")
+        print(f"❌ Bot connection failed: {response.text}")
         return False
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -114,12 +108,27 @@ def send_telegram(message, disable_notification=False):
             'parse_mode': 'HTML',
             'disable_notification': disable_notification
         }
+        
+        print(f"📤 Sending Telegram message...")
+        print(f"📝 Chat ID: {TELEGRAM_CHAT_ID}")
+        print(f"📝 Message preview: {message[:50]}...")
+        
         response = requests.post(url, data=payload, timeout=10)
+        print(f"📡 Response status: {response.status_code}")
+        print(f"📡 Response text: {response.text[:200]}")
+        
         if response.status_code == 200:
-            print("✅ Telegram message sent")
-            return True
-        print(f"❌ Telegram failed: {response.text[:200]}")
-        return False
+            data = response.json()
+            if data.get('ok'):
+                print("✅ Telegram message sent!")
+                return True
+            else:
+                print(f"❌ Telegram API error: {data}")
+                return False
+        else:
+            print(f"❌ HTTP Error: {response.status_code}")
+            return False
+            
     except Exception as e:
         print(f"❌ Telegram error: {e}")
         return False
@@ -132,13 +141,9 @@ def get_latest_data(symbol):
     try:
         end_date = datetime.now()
         start_1h = end_date - timedelta(days=30)
-        start_15m = end_date - timedelta(days=7)
         
         df_1h = yf.download(symbol, start=start_1h, end=end_date, 
                             interval='1h', progress=False)
-        
-        df_15m = yf.download(symbol, start=start_15m, end=end_date, 
-                             interval='15m', progress=False)
         
         if df_1h.empty:
             return None, None
@@ -146,10 +151,7 @@ def get_latest_data(symbol):
         if hasattr(df_1h, 'columns') and isinstance(df_1h.columns, pd.MultiIndex):
             df_1h.columns = df_1h.columns.get_level_values(0)
         
-        if not df_15m.empty and hasattr(df_15m, 'columns') and isinstance(df_15m.columns, pd.MultiIndex):
-            df_15m.columns = df_15m.columns.get_level_values(0)
-        
-        return df_1h, df_15m
+        return df_1h, None  # 15M data optional
     except Exception as e:
         print(f"❌ Error fetching {symbol}: {e}")
         return None, None
@@ -227,7 +229,6 @@ def calculate_signals(df_1h, df_15m, symbol):
     current_rsi = rsi_1h[-1]
     current_wma = wma_rsi_1h[-1]
     current_vwap = vwap_1h[-1]
-    current_date = dates_1h[-1]
     
     is_buy = buy_signal[-1]
     is_sell = sell_signal[-1]
@@ -239,7 +240,6 @@ def calculate_signals(df_1h, df_15m, symbol):
         'rsi': current_rsi,
         'wma': current_wma,
         'vwap': current_vwap,
-        'date': current_date,
         'timestamp': datetime.now()
     }
 
@@ -252,7 +252,6 @@ def scan_and_alert():
     
     print(f"\n📊 Scanning at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    signals_found = 0
     alert_messages = []
     
     for symbol, config in SYMBOLS.items():
@@ -260,7 +259,7 @@ def scan_and_alert():
         
         df_1h, df_15m = get_latest_data(symbol)
         
-        if df_1h is None or df_15m is None:
+        if df_1h is None:
             print(f"    ❌ No data")
             continue
         
@@ -271,9 +270,6 @@ def scan_and_alert():
             continue
         
         if result['signal'] != 'HOLD':
-            signals_found += 1
-            
-            # Build alert message
             emoji = config['emoji']
             name = config['name']
             price = result['price']
@@ -305,7 +301,7 @@ def scan_and_alert():
         
         time.sleep(0.2)
     
-    # Send Telegram alerts
+    # Send alerts
     if alert_messages:
         header = f"🎯 <b>SIGNAL ALERTS</b>\n⏱ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'='*40}\n"
         
@@ -314,7 +310,7 @@ def scan_and_alert():
             send_telegram(full_msg)
             time.sleep(0.5)
         
-        print(f"✅ Sent {len(alert_messages)} alerts to Telegram")
+        print(f"✅ Sent {len(alert_messages)} alerts")
     else:
         print("⏸️ No signals found")
 
@@ -348,7 +344,7 @@ def main_loop():
     
     # Then loop every 15 minutes
     while True:
-        time.sleep(900)  # 15 minutes
+        time.sleep(900)
         scan_and_alert()
 
 # ============================================
@@ -357,24 +353,18 @@ def main_loop():
 
 if __name__ == "__main__":
     print("="*70)
-    print("🚀 MULTI-SYMBOL SIGNAL BOT WITH TELEGRAM")
-    print("📊 9 Symbols | 66% Win Rate Strategy")
+    print("🚀 MULTI-SYMBOL SIGNAL BOT")
     print("="*70)
     
-    # Start web server for health checks
+    # Start web server
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
-    print("🌐 Web server started for health checks")
+    print("🌐 Web server started")
     
-    # Test Telegram connection
-    print("\n📱 Testing Telegram connection...")
+    # Test Telegram
+    print("\n📱 Testing Telegram...")
     if not test_telegram_connection():
-        print("❌ Failed to connect to Telegram")
-        sys.exit(1)
-    
-    if not test_group_chat_id():
-        print("❌ Failed to send test message to group")
-        sys.exit(1)
+        print("⚠️ Telegram connection failed, but bot will continue")
     
     # Start main loop
     main_loop()
